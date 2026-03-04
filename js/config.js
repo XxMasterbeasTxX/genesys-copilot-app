@@ -7,11 +7,9 @@ export const CONFIG = {
   appName: "Agent Copilot",
 
   // OAuth Client Application (Authorization Code + PKCE)
-  // TODO: Replace with the customer-specific OAuth Client ID
-  oauthClientId: "REPLACE_WITH_CUSTOMER_OAUTH_CLIENT_ID",
+  oauthClientId: "b1945404-67f3-4909-aebf-b67ab7119544",
 
-  // TODO: Replace with the customer's Azure Static Web App URL
-  oauthRedirectUri: "https://REPLACE_WITH_SWA_HOSTNAME.azurestaticapps.net",
+  oauthRedirectUri: "https://thankful-mushroom-005ed0710.1.azurestaticapps.net",
 
   // OIDC scopes — enriches the id_token. API permissions are controlled
   // by the OAuth client roles and the user's own roles in Genesys Cloud admin.

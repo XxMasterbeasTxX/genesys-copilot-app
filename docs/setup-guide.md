@@ -9,15 +9,16 @@ Complete step-by-step guide for deploying the Agent Copilot app at a new custome
 1. [Prerequisites](#1-prerequisites)
 2. [GitHub Repository Setup](#2-github-repository-setup)
 3. [Genesys Cloud Configuration](#3-genesys-cloud-configuration)
-4. [Azure Static Web App (SPA Hosting)](#4-azure-static-web-app-spa-hosting)
-5. [Application Configuration](#5-application-configuration)
-6. [Feature Configuration](#6-feature-configuration)
-7. [GitHub Secrets & CI/CD](#7-github-secrets--cicd)
-8. [First Deployment](#8-first-deployment)
-9. [Verification Checklist](#9-verification-checklist)
-10. [Genesys Cloud Premium App Integration](#10-genesys-cloud-premium-app-integration)
-11. [Ongoing Maintenance](#11-ongoing-maintenance)
-12. [Troubleshooting](#12-troubleshooting)
+4. [User Role Permissions](#4-user-role-permissions)
+5. [Azure Static Web App (SPA Hosting)](#5-azure-static-web-app-spa-hosting)
+6. [Application Configuration](#6-application-configuration)
+7. [Feature Configuration](#7-feature-configuration)
+8. [GitHub Secrets & CI/CD](#8-github-secrets--cicd)
+9. [First Deployment](#9-first-deployment)
+10. [Verification Checklist](#10-verification-checklist)
+11. [Genesys Cloud Premium App Integration](#11-genesys-cloud-premium-app-integration)
+12. [Ongoing Maintenance](#12-ongoing-maintenance)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -27,7 +28,7 @@ Before starting, ensure you have:
 
 | Requirement | Details |
 | --- | --- |
-| **Genesys Cloud org** | Admin access to create OAuth clients and roles |
+| **Genesys Cloud org** | Admin access to create OAuth clients and manage user roles |
 | **Azure subscription** | With permissions to create Resource Groups and Static Web Apps |
 | **GitHub account** | Repository access and admin permissions to configure secrets |
 
@@ -98,33 +99,17 @@ This app uses a single OAuth client that authenticates users via the browser usi
 | --- | --- |
 | App Name | `Agent Copilot` (or customer preference) |
 | Grant Type | **Authorization Code** |
-| Authorized redirect URI | The SWA URL (set after Step 4), e.g. `https://<swa-hostname>.azurestaticapps.net` |
+| Authorized redirect URI | The SWA URL (set after Step 5), e.g. `https://<swa-hostname>.azurestaticapps.net` |
 
-1. Under **Scope**, ensure these are available:
-   - `openid`
-   - `profile`
-   - `email`
+4. Under **Scope**, enable:
+   - `routing` — required for queue, skill, and wrap-up code lookups
 
-2. Under **Roles**, assign a role that includes **all** of the following permissions:
+> **Note:** The OIDC scopes (`openid`, `profile`, `email`) used in the authorization URL are implicit and do **not** appear in the OAuth client scope list. They are always available for Authorization Code grants.
 
-| Permission Category | Permission | Purpose |
-| --- | --- | --- |
-| **Analytics** | `analytics:conversationDetail:view` | Query conversation history by date range |
-| **Conversation** | `conversation:communication:view` | Fetch conversation participants and checklist data |
-| **Conversation** | `conversation:summary:view` | Display AI-generated conversation summaries |
-| **Assistants** | `assistants:assistant:view` | List copilot-enabled assistants |
-| **Assistants** | `assistants:queue:view` | List queue assignments per assistant |
-| **Routing** | `routing:queue:view` | Resolve queue names |
-| **Routing** | `routing:queue:member:view` | List queue members for the agent filter |
-| **Routing** | `routing:wrapupCode:view` | Resolve wrap-up code names in results |
-| **Recording** | `recording:recording:view` | Inline audio playback in the drill-down *(optional)* |
-| **Recording** | `recording:screenRecording:view` | Screen recording playback *(optional)* |
+5. Click **Save**
+6. **Copy the Client ID** — you'll need it for `js/config.js`
 
-1. Click **Save**
-2. **Copy the Client ID** — you'll need it for `js/config.js`
-
-> **Note:** PKCE clients do NOT have a client secret. The Client ID is public and safe to store in front-end code.
-> **Recording permissions are optional.** If omitted, the "Load Recordings" button will show an error message but will not break any other functionality.
+> **Important:** Authorization Code / PKCE clients do **not** have a client secret and do **not** support assigning roles. The Client ID is public and safe to store in front-end code. All API permissions are determined by the **logged-in user's own Genesys Cloud role** (see [Step 4](#4-user-role-permissions)).
 
 ### 3.2 Identify the Region
 
@@ -148,9 +133,46 @@ You'll use this value in `js/config.js`.
 
 ---
 
-## 4. Azure Static Web App (SPA Hosting)
+## 4. User Role Permissions
 
-### 4.1 Create the Static Web App
+Since this app uses Authorization Code + PKCE, every API call is made with the **logged-in user's own access token**. The OAuth client does not carry any roles — the user's Genesys Cloud role determines what data they can access.
+
+Each user who will use this app must have a role that includes the following permissions. You can either add these to an existing role or create a dedicated role (e.g. `Agent Copilot User`).
+
+### 4.1 Required Permissions
+
+| Permission Category | Permission | Purpose |
+| --- | --- | --- |
+| **Analytics** | `analytics:conversationDetail:view` | Query conversation history by date range |
+| **Conversation** | `conversation:communication:view` | Fetch conversation participants and checklist data |
+| **Conversation** | `conversation:summary:view` | Display AI-generated conversation summaries |
+| **Assistants** | `assistants:assistant:view` | List copilot-enabled assistants |
+| **Assistants** | `assistants:queue:view` | List queue assignments per assistant |
+| **Routing** | `routing:queue:view` | Resolve queue names |
+| **Routing** | `routing:queue:member:view` | List queue members for the agent filter |
+| **Routing** | `routing:wrapupCode:view` | Resolve wrap-up code names in results |
+
+### 4.2 Optional Permissions
+
+| Permission Category | Permission | Purpose |
+| --- | --- | --- |
+| **Recording** | `recording:recording:view` | Inline audio playback in the drill-down |
+| **Recording** | `recording:screenRecording:view` | Screen recording playback |
+
+> **Note:** Recording permissions are optional. If a user lacks them, the "Load Recordings" button will show an error but all other functionality will work normally.
+
+### 4.3 Assigning the Role
+
+1. Go to **Admin → Roles / Permissions**
+2. Create a new role (e.g. `Agent Copilot User`) or edit an existing one
+3. Add the permissions listed above
+4. Go to **Admin → People** and assign the role to each user who needs access
+
+---
+
+## 5. Azure Static Web App (SPA Hosting)
+
+### 5.1 Create the Static Web App
 
 1. Go to **Azure Portal → Create a resource → Static Web App**
 2. Configure:
@@ -180,7 +202,7 @@ You'll use this value in `js/config.js`.
 
 Azure will automatically create a GitHub Actions workflow file. If it does, you can either use the auto-generated workflow or replace it with the one already included in the repository (`.github/workflows/azure-static-web-apps.yml`).
 
-### 4.2 Note the SWA URL
+### 5.2 Note the SWA URL
 
 After creation, go to **Overview** and copy the **URL**, e.g.:
 
@@ -191,9 +213,9 @@ https://happy-rock-0a1b2c3d4.2.azurestaticapps.net
 You'll need this for:
 
 - Genesys OAuth redirect URI (Step 3.1)
-- `oauthRedirectUri` in `js/config.js` (Step 5)
+- `oauthRedirectUri` in `js/config.js` (Step 6)
 
-### 4.3 Verify the Workflow
+### 5.3 Verify the Workflow
 
 The workflow file should include `skip_app_build: true` since there is no build step. Check `.github/workflows/azure-static-web-apps.yml`:
 
@@ -205,9 +227,9 @@ If Azure auto-generated a different workflow file, either delete it and keep the
 
 ---
 
-## 5. Application Configuration
+## 6. Application Configuration
 
-### 5.1 Front-End Config — `js/config.js`
+### 6.1 Front-End Config — `js/config.js`
 
 Update these values for the customer:
 
@@ -236,11 +258,11 @@ export const CONFIG = {
 | --- | --- |
 | `REGION` | Customer's Genesys region (Step 3.2) |
 | `oauthClientId` | PKCE OAuth Client ID (Step 3.1) |
-| `oauthRedirectUri` | SWA URL (Step 4.2) — must match **exactly** |
+| `oauthRedirectUri` | SWA URL (Step 5.2) — must match **exactly** |
 
 > **Important:** The `oauthRedirectUri` must match the Authorized redirect URI in the Genesys OAuth client configuration exactly (including protocol, no trailing slash).
 
-### 5.2 Navigation — `js/navConfig.js`
+### 6.2 Navigation — `js/navConfig.js`
 
 The navigation tree is pre-configured for Agent Copilot only. Enable or disable pages by setting `enabled: true/false` on any node.
 
@@ -251,7 +273,7 @@ Currently included:
 | Agent Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
 
-### 5.3 Light / Dark Theme
+### 6.3 Light / Dark Theme
 
 The app automatically follows the browser / OS colour scheme. No configuration is needed — it works out of the box via `@media (prefers-color-scheme: light)` in `css/styles.css`.
 
@@ -263,9 +285,9 @@ To **customise** light-mode colours, edit the `@media (prefers-color-scheme: lig
 
 ---
 
-## 6. Feature Configuration
+## 7. Feature Configuration
 
-### 6.1 Checklist Config — `js/pages/dashboards/agent-copilot/checklistConfig.js`
+### 7.1 Checklist Config — `js/pages/dashboards/agent-copilot/checklistConfig.js`
 
 This file contains all feature-level tunables and labels for the Agent Checklists page:
 
@@ -313,9 +335,9 @@ This file contains all feature-level tunables and labels for the Agent Checklist
 
 ---
 
-## 7. GitHub Secrets & CI/CD
+## 8. GitHub Secrets & CI/CD
 
-### 7.1 Add the GitHub Secret
+### 8.1 Add the GitHub Secret
 
 Go to the GitHub repository → **Settings → Secrets and variables → Actions → New repository secret**:
 
@@ -331,7 +353,7 @@ To get the token:
 
 > If Azure auto-created a workflow with a different secret name (e.g. `AZURE_STATIC_WEB_APPS_API_TOKEN_HAPPY_ROCK_0A1B2C3D4`), either rename the secret to match, or update the workflow file to use `AZURE_STATIC_WEB_APPS_API_TOKEN`.
 
-### 7.2 CI/CD Workflow
+### 8.2 CI/CD Workflow
 
 One workflow is included:
 
@@ -343,9 +365,9 @@ No backend deployment workflow is needed.
 
 ---
 
-## 8. First Deployment
+## 9. First Deployment
 
-### 8.1 Commit and Push
+### 9.1 Commit and Push
 
 After updating `js/config.js` with the customer's values:
 
@@ -355,12 +377,12 @@ git commit -m "feat: configure for customer deployment"
 git push origin main
 ```
 
-### 8.2 Monitor Deployment
+### 9.2 Monitor Deployment
 
 1. Go to **GitHub → Actions** tab
 2. Verify the `Azure Static Web Apps CI/CD` workflow completes successfully (green checkmark)
 
-### 8.3 Update Genesys OAuth Redirect URI
+### 9.3 Update Genesys OAuth Redirect URI
 
 If you didn't set the redirect URI in Step 3.1 (because the SWA URL wasn't known yet):
 
@@ -370,7 +392,7 @@ If you didn't set the redirect URI in Step 3.1 (because the SWA URL wasn't known
 
 ---
 
-## 9. Verification Checklist
+## 10. Verification Checklist
 
 Run through these checks after deployment:
 
@@ -431,7 +453,7 @@ Run through these checks after deployment:
 
 ---
 
-## 10. Genesys Cloud Premium App Integration
+## 11. Genesys Cloud Premium App Integration
 
 To embed the app inside the Genesys Cloud client interface:
 
@@ -455,7 +477,7 @@ To embed the app inside the Genesys Cloud client interface:
 
 ---
 
-## 11. Ongoing Maintenance
+## 12. Ongoing Maintenance
 
 ### Updating the App
 
@@ -481,7 +503,7 @@ This app has no backend resources, so hosting costs are effectively **zero** on 
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### OAuth redirect fails
 
@@ -490,13 +512,13 @@ This app has no backend resources, so hosting costs are effectively **zero** on 
 
 ### "No copilot-enabled assistants found"
 
-- **Cause**: No assistants with copilot enabled exist, or the OAuth client lacks `assistants:assistant:view` permission
-- **Fix**: Verify copilot assistants are configured in Genesys Admin → Performance → Agent Copilot. Ensure the PKCE OAuth client's role includes the **Assistants** permissions.
+- **Cause**: No assistants with copilot enabled exist, or the logged-in user lacks `assistants:assistant:view` permission
+- **Fix**: Verify copilot assistants are configured in Genesys Admin → Performance → Agent Copilot. Ensure the user’s role includes the **Assistants** permissions (see [Step 4](#4-user-role-permissions)).
 
 ### All interactions show "No checklist"
 
-- **Cause**: Missing `conversation:communication:view` permission, or the OAuth client cannot access the agent checklists API
-- **Fix**: Ensure the PKCE OAuth client's role includes `conversation:communication:view`. Check the browser DevTools console for `[Checklists]` log entries with 403/404 errors.
+- **Cause**: Missing `conversation:communication:view` permission on the user’s role
+- **Fix**: Ensure the user’s Genesys Cloud role includes `conversation:communication:view` (see [Step 4](#4-user-role-permissions)). Check the browser DevTools console for `[Checklists]` log entries with 403/404 errors.
 
 ### "The selected period spans X days"
 
@@ -518,13 +540,13 @@ This app has no backend resources, so hosting costs are effectively **zero** on 
 
 ### "Load Recordings" shows "No recordings for this interaction."
 
-- **Cause**: The OAuth client lacks `recording:recording:view` permission, the recording is archived/deleted, or Genesys hasn't finished indexing it yet
-- **Fix**: Ensure the PKCE OAuth client's role includes `recording:recording:view`. For screen recordings also add `recording:screenRecording:view`. Archived recordings show "Archived — not directly playable." per segment button.
+- **Cause**: The user’s role lacks `recording:recording:view` permission, the recording is archived/deleted, or Genesys hasn't finished indexing it yet
+- **Fix**: Ensure the user’s Genesys Cloud role includes `recording:recording:view`. For screen recordings also add `recording:screenRecording:view` (see [Step 4](#4-user-role-permissions)). Archived recordings show "Archived — not directly playable." per segment button.
 
 ### Conversation summary not showing
 
 - **Cause**: The conversation has no AI-generated summary, or the user lacks `conversation:summary:view` permission
-- **Fix**: Summaries are only generated for conversations where Agent Copilot is active and the conversation has ended. Check the browser DevTools console for `[Summaries]` log entries — a 404 means no summary exists; a 403 means the permission is missing. Ensure the PKCE OAuth client's role includes `conversation:summary:view`.
+- **Fix**: Summaries are only generated for conversations where Agent Copilot is active and the conversation has ended. Check the browser DevTools console for `[Summaries]` log entries — a 404 means no summary exists; a 403 means the permission is missing. Ensure the user’s role includes `conversation:summary:view` (see [Step 4](#4-user-role-permissions)).
 
 ### GitHub Actions deploy fails
 
