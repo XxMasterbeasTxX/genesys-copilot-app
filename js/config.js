@@ -12,7 +12,7 @@ export const CONFIG = {
   oauthRedirectUri: "https://thankful-mushroom-005ed0710.1.azurestaticapps.net",
 
   // OIDC scopes — enriches the id_token. API permissions are controlled
-  // by the OAuth client roles and the user's own roles in Genesys Cloud admin.
+  // by the logged-in user's own role in Genesys Cloud admin (not the OAuth client).
   // "routing" scope is required for queue/skill/wrapup-code lookups.
   oauthScopes: ["openid", "profile", "email", "routing"],
 

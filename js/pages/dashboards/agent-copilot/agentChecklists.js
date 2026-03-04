@@ -1223,15 +1223,15 @@ export async function render({ route, me, api }) {
       loadBtn.textContent = "⏳ Loading…";
 
       try {
-        // Step 1: fetch stubs; retry once after 3s if Genesys hasn't indexed yet
+        // Step 1: fetch stubs; retry up to 2 more times if Genesys hasn't indexed yet
         let available = await fetchStubs();
-        if (!available.length) {
+        for (let stubRetry = 0; !available.length && stubRetry < 2; stubRetry++) {
           loadBtn.textContent = "⏳ Retrying…";
           await new Promise((r) => setTimeout(r, 3000));
           available = await fetchStubs();
         }
 
-        // Lock after both attempts so the button can't be clicked again
+        // Lock after all attempts so the button can't be clicked again
         loadBtn.dataset.loaded = "1";
 
         if (!available.length) {
@@ -1282,23 +1282,35 @@ export async function render({ route, me, api }) {
               recBtn.classList.add("checklist-drilldown__recording-btn--active");
               return;
             }
-            // First click — fetch URI
+            // First click — fetch URI with retry for transcoding
             recBtn.disabled = true;
-            recBtn.textContent = "⏳…";
+            recBtn.textContent = "⏳ Transcoding…";
+            const MAX_TRANSCODE_ATTEMPTS = 5;
+            const TRANSCODE_RETRY_DELAY = 3000;
             try {
               if (stub.fileState === "ARCHIVED") {
                 playerSlot.innerHTML = `<span class="checklist-drilldown__recording-msg">Archived — not directly playable.</span>`;
               } else {
                 const isScreenStub = (stub.media ?? stub.mediaType ?? "").toLowerCase() === "screen";
                 const formatId = isScreenStub ? "WEBM" : "MP3";
-                const rec = await api.getConversationRecording(convId, stub.id, formatId);
-                const uri = rec?.mediaUris?.[formatId]?.mediaUri
-                  ?? rec?.mediaUris?.MP3?.mediaUri
-                  ?? rec?.mediaUris?.WEBM?.mediaUri
-                  ?? rec?.mediaUris?.WAV?.mediaUri
-                  ?? rec?.mediaUri
-                  ?? Object.values(rec?.mediaUris ?? {})[0]?.mediaUri
-                  ?? null;
+
+                let uri = null;
+                let rec = null;
+                for (let attempt = 0; attempt < MAX_TRANSCODE_ATTEMPTS; attempt++) {
+                  rec = await api.getConversationRecording(convId, stub.id, formatId);
+                  uri = rec?.mediaUris?.[formatId]?.mediaUri
+                    ?? rec?.mediaUris?.MP3?.mediaUri
+                    ?? rec?.mediaUris?.WEBM?.mediaUri
+                    ?? rec?.mediaUris?.WAV?.mediaUri
+                    ?? rec?.mediaUri
+                    ?? Object.values(rec?.mediaUris ?? {})[0]?.mediaUri
+                    ?? null;
+                  if (uri) break;
+                  if (attempt < MAX_TRANSCODE_ATTEMPTS - 1) {
+                    await new Promise((r) => setTimeout(r, TRANSCODE_RETRY_DELAY));
+                  }
+                }
+
                 if (!uri) {
                   playerSlot.innerHTML = `<span class="checklist-drilldown__recording-msg">Recording not yet available (may still be processing).</span>`;
                 } else {

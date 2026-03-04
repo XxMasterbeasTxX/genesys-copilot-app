@@ -189,7 +189,7 @@ Each user who will use this app must have a role that includes the following per
 | Repository | The repo from Step 2 |
 | Branch | `main` |
 
-1. In **Build Details**:
+3. In **Build Details**:
 
 | Field | Value |
 | --- | --- |
@@ -198,9 +198,17 @@ Each user who will use this app must have a role that includes the following per
 | API location | *(leave empty)* |
 | Output location | *(leave empty)* |
 
-1. Click **Review + Create → Create**
+4. Click **Review + Create → Create**
 
 Azure will automatically create a GitHub Actions workflow file. If it does, you can either use the auto-generated workflow or replace it with the one already included in the repository (`.github/workflows/azure-static-web-apps.yml`).
+
+> **⚠️ Important:** When Azure creates the SWA linked to your GitHub repo, it pushes a new commit (containing the auto-generated workflow file) directly to `main`. This means your remote branch will be **ahead** of your local branch. Before you can push any local changes you **must** pull first:
+>
+> ```bash
+> git pull origin main --no-rebase
+> ```
+>
+> Git will open an editor for the merge commit message — save and close it to continue. After the pull completes, you can also delete the duplicate workflow file Azure created (e.g. `azure-static-web-apps-<swa-name>.yml`) since the repo already includes the correct one. Then commit and push as normal.
 
 ### 5.2 Note the SWA URL
 
@@ -244,7 +252,7 @@ export const CONFIG = {
 
   oauthClientId: "xxxxxxxx-xxxx-...",         // ← PKCE Client ID from Step 3.1
 
-  oauthRedirectUri: "https://...",            // ← Exact SWA URL from Step 4.2
+  oauthRedirectUri: "https://...",            // ← Exact SWA URL from Step 5.2
 
   oauthScopes: ["openid", "profile", "email", "routing"],
 
@@ -377,6 +385,8 @@ git commit -m "feat: configure for customer deployment"
 git push origin main
 ```
 
+> **Note:** If the push is rejected with a `non-fast-forward` error, you need to pull first. This happens when Azure pushed the auto-generated workflow file in Step 5. See the [git pull instructions in Step 5.1](#51-create-the-static-web-app).
+
 ### 9.2 Monitor Deployment
 
 1. Go to **GitHub → Actions** tab
@@ -468,10 +478,10 @@ To embed the app inside the Genesys Cloud client interface:
 | Application Type | `iframe` |
 | Sandbox | `allow-scripts allow-same-origin allow-forms allow-popups` |
 
-1. Under **Configuration → Properties**, set:
+5. Under **Configuration → Properties**, set:
    - **Display Type**: `standalone` or `widget` depending on where it should appear
 
-2. Activate the integration
+6. Activate the integration
 
 > The app detects whether it's running inside a Genesys Cloud iframe or a standalone browser tab and adapts its fullscreen behaviour accordingly.
 
