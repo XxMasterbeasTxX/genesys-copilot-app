@@ -101,13 +101,13 @@ This app uses a single OAuth client that authenticates users via the browser usi
 | Grant Type | **Authorization Code** |
 | Authorized redirect URI | The SWA URL (set after Step 5), e.g. `https://<swa-hostname>.azurestaticapps.net` |
 
-4. Under **Scope**, enable:
+1. Under **Scope**, enable:
    - `routing` — required for queue, skill, and wrap-up code lookups
 
 > **Note:** The OIDC scopes (`openid`, `profile`, `email`) used in the authorization URL are implicit and do **not** appear in the OAuth client scope list. They are always available for Authorization Code grants.
 
-5. Click **Save**
-6. **Copy the Client ID** — you'll need it for `js/config.js`
+1. Click **Save**
+2. **Copy the Client ID** — you'll need it for `js/config.js`
 
 > **Important:** Authorization Code / PKCE clients do **not** have a client secret and do **not** support assigning roles. The Client ID is public and safe to store in front-end code. All API permissions are determined by the **logged-in user's own Genesys Cloud role** (see [Step 4](#4-user-role-permissions)).
 
@@ -189,7 +189,7 @@ Each user who will use this app must have a role that includes the following per
 | Repository | The repo from Step 2 |
 | Branch | `main` |
 
-3. In **Build Details**:
+1. In **Build Details**:
 
 | Field | Value |
 | --- | --- |
@@ -198,7 +198,7 @@ Each user who will use this app must have a role that includes the following per
 | API location | *(leave empty)* |
 | Output location | *(leave empty)* |
 
-4. Click **Review + Create → Create**
+1. Click **Review + Create → Create**
 
 Azure will automatically create a GitHub Actions workflow file. If it does, you can either use the auto-generated workflow or replace it with the one already included in the repository (`.github/workflows/azure-static-web-apps.yml`).
 
@@ -465,23 +465,77 @@ Run through these checks after deployment:
 
 ## 11. Genesys Cloud Premium App Integration
 
-To embed the app inside the Genesys Cloud client interface:
+This step embeds the app inside the Genesys Cloud client so that users can access it from the sidebar without opening a separate browser tab.
+
+### 11.1 Install the Integration
 
 1. Go to **Admin → Integrations → Integrations**
 2. Click **+ Add Integration**
-3. Search for **Premium App** and install it
-4. Configure:
+3. Search for **Premium Client Application** and click **Install**
+4. Give the integration a name, e.g. `Agent Copilot Dashboard`
+5. Click **Save** (it will be inactive by default — you'll activate it after configuration)
 
-| Field | Value |
-| --- | --- |
-| Application URL | The SWA URL (e.g. `https://happy-rock-0a1b2c3d4.2.azurestaticapps.net`) |
-| Application Type | `iframe` |
-| Sandbox | `allow-scripts allow-same-origin allow-forms allow-popups` |
+### 11.2 Configure the Integration
 
-5. Under **Configuration → Properties**, set:
-   - **Display Type**: `standalone` or `widget` depending on where it should appear
+1. Open the integration you just created
+2. Go to the **Configuration** tab
+3. On the **Application URL** field, paste your SWA URL:
 
-6. Activate the integration
+```text
+https://happy-rock-0a1b2c3d4.2.azurestaticapps.net
+```
+
+4. Set the remaining properties:
+
+| Property | Recommended Value | Notes |
+| --- | --- | --- |
+| **Application Type** | `standalone` | Opens in the main Genesys Cloud content area |
+| **Sandbox** | `allow-scripts allow-same-origin allow-forms allow-popups` | Required for OAuth redirect, API calls, and Excel export |
+| **Display Type** | `standalone` | Full-page app in the Apps menu |
+| **Feature Category** | *(optional)* | Group the app under a category in the Apps menu |
+
+> **Sandbox values explained:**
+> - `allow-scripts` — The app runs JavaScript
+> - `allow-same-origin` — Required for sessionStorage and API calls
+> - `allow-forms` — Needed for the OAuth login redirect
+> - `allow-popups` — Needed for the Excel export (opens `download.html` in a new tab)
+
+5. *(Optional)* Add a custom icon under **Advanced** → upload a logo or provide an icon URL
+6. Click **Save**
+
+### 11.3 Assign Groups
+
+By default, a Premium App is visible to **all users** in the org. To restrict access to specific teams:
+
+1. Stay on the integration's **Configuration** tab
+2. Go to the **Groups** section (or **Assigned Groups**, depending on your Genesys Cloud version)
+3. Click **Add Group** and search for the Genesys Cloud group(s) that should have access
+4. Add each group (e.g. `Supervisors`, `QA Team`, `Contact Centre Leads`)
+5. Click **Save**
+
+> **How it works:** Only members of the assigned groups will see the app in their Genesys Cloud sidebar / Apps menu. If no groups are assigned, all users in the org can see it.
+>
+> **Creating a group (if needed):**
+> 1. Go to **Admin → Groups**
+> 2. Click **Create Group**
+> 3. Name it (e.g. `Agent Copilot Users`), set visibility to **Members Only** or **Public**
+> 4. Add the users who should have access
+> 5. Save, then come back to the integration and assign this group
+
+### 11.4 Activate the Integration
+
+1. Return to the integration overview (or the **Details** tab)
+2. Toggle the **Status** switch to **Active**
+3. Click **Save** (or confirm the activation prompt)
+
+The app will now appear in the Genesys Cloud client for users in the assigned groups.
+
+### 11.5 Verify
+
+- Log in to Genesys Cloud as a user who belongs to one of the assigned groups
+- Look for the app in the **Apps** menu on the left sidebar
+- Click it and confirm the Agent Copilot dashboard loads inside Genesys Cloud
+- Verify that the OAuth login flow completes successfully within the iframe
 
 > The app detects whether it's running inside a Genesys Cloud iframe or a standalone browser tab and adapts its fullscreen behaviour accordingly.
 

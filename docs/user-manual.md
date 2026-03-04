@@ -20,8 +20,9 @@ Welcome to the Agent Copilot dashboard. This app lets you review conversations t
    - [Conversation Summaries](#43-conversation-summaries)
 5. [Excel Export](#5-excel-export)
 6. [Theme (Light / Dark)](#6-theme-light--dark)
-7. [Session & Security](#7-session--security)
-8. [FAQ](#8-faq)
+7. [Accessing from Genesys Cloud](#7-accessing-from-genesys-cloud)
+8. [Session & Security](#8-session--security)
+9. [FAQ](#9-faq)
 
 ---
 
@@ -204,7 +205,21 @@ To switch, change your OS or browser theme setting. The app updates instantly wi
 
 ---
 
-## 7. Session & Security
+## 7. Accessing from Genesys Cloud
+
+If your administrator has installed the app as a **Premium Client Application** inside Genesys Cloud, you can access it directly from the Genesys Cloud interface:
+
+1. Log in to Genesys Cloud as you normally would
+2. In the left sidebar, look for the **Apps** menu (or the app name your administrator configured, e.g. "Agent Copilot Dashboard")
+3. Click on it — the dashboard loads inside Genesys Cloud
+
+> **Can't see the app?** Your administrator may have restricted access to specific groups. Ask your administrator to add you to the correct Genesys Cloud group (see the [setup guide](setup-guide.md) for details).
+
+The app works identically whether opened inside Genesys Cloud or in a standalone browser tab. The only difference is that the Excel export may ask you to allow pop-ups the first time, since the Genesys Cloud iframe has security restrictions.
+
+---
+
+## 8. Session & Security
 
 - **Your data stays in your browser.** All API calls go directly from your browser to Genesys Cloud. No data passes through any intermediate server.
 - **Nothing is stored permanently.** The app uses session storage (cleared when you close the tab). No cookies are used.
@@ -213,7 +228,7 @@ To switch, change your OS or browser theme setting. The app updates instantly wi
 
 ---
 
-## 8. FAQ
+## 9. FAQ
 
 ### Why do I see "No copilot-enabled assistants found"?
 
