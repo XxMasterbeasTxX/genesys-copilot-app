@@ -16,7 +16,7 @@ Complete step-by-step guide for deploying the Agent Copilot app at a new custome
 8. [GitHub Secrets & CI/CD](#8-github-secrets--cicd)
 9. [First Deployment](#9-first-deployment)
 10. [Verification Checklist](#10-verification-checklist)
-11. [Genesys Cloud Premium App Integration](#11-genesys-cloud-premium-app-integration)
+11. [Genesys Cloud App Integration](#11-genesys-cloud-app-integration)
 12. [Ongoing Maintenance](#12-ongoing-maintenance)
 13. [Troubleshooting](#13-troubleshooting)
 
@@ -151,17 +151,10 @@ Each user who will use this app must have a role that includes the following per
 | **Routing** | `routing:queue:view` | Resolve queue names |
 | **Routing** | `routing:queue:member:view` | List queue members for the agent filter |
 | **Routing** | `routing:wrapupCode:view` | Resolve wrap-up code names in results |
-
-### 4.2 Optional Permissions
-
-| Permission Category | Permission | Purpose |
-| --- | --- | --- |
 | **Recording** | `recording:recording:view` | Inline audio playback in the drill-down |
 | **Recording** | `recording:screenRecording:view` | Screen recording playback |
 
-> **Note:** Recording permissions are optional. If a user lacks them, the "Load Recordings" button will show an error but all other functionality will work normally.
-
-### 4.3 Assigning the Role
+### 4.2 Assigning the Role
 
 1. Go to **Admin → Roles / Permissions**
 2. Create a new role (e.g. `Agent Copilot User`) or edit an existing one
@@ -463,7 +456,7 @@ Run through these checks after deployment:
 
 ---
 
-## 11. Genesys Cloud Premium App Integration
+## 11. Genesys Cloud App Integration
 
 This step embeds the app inside the Genesys Cloud client so that users can access it from the sidebar without opening a separate browser tab.
 
@@ -471,7 +464,7 @@ This step embeds the app inside the Genesys Cloud client so that users can acces
 
 1. Go to **Admin → Integrations → Integrations**
 2. Click **+ Add Integration**
-3. Search for **Premium Client Application** and click **Install**
+3. Search for **Client Application** and click **Install**
 4. Give the integration a name, e.g. `Agent Copilot Dashboard`
 5. Click **Save** (it will be inactive by default — you'll activate it after configuration)
 
@@ -482,51 +475,43 @@ This step embeds the app inside the Genesys Cloud client so that users can acces
 3. On the **Application URL** field, paste your SWA URL:
 
 ```text
-https://happy-rock-0a1b2c3d4.2.azurestaticapps.net
+Ex. https://happy-rock-0a1b2c3d4.2.azurestaticapps.ne
 ```
 
-4. Set the remaining properties:
+1. Set the remaining properties:
 
 | Property | Recommended Value | Notes |
 | --- | --- | --- |
 | **Application Type** | `standalone` | Opens in the main Genesys Cloud content area |
-| **Sandbox** | `allow-scripts allow-same-origin allow-forms allow-popups` | Required for OAuth redirect, API calls, and Excel export |
-| **Display Type** | `standalone` | Full-page app in the Apps menu |
+| **Iframe Sandbox Options** | `allow-scripts,allow-same-origin,allow-forms,allow-popups` | Required for OAuth redirect, API calls, and Excel export |
+| **Application Type** | `standalone` | Full-page app in the Apps menu |
 | **Feature Category** | *(optional)* | Group the app under a category in the Apps menu |
 
 > **Sandbox values explained:**
+>
 > - `allow-scripts` — The app runs JavaScript
 > - `allow-same-origin` — Required for sessionStorage and API calls
 > - `allow-forms` — Needed for the OAuth login redirect
 > - `allow-popups` — Needed for the Excel export (opens `download.html` in a new tab)
 
-5. *(Optional)* Add a custom icon under **Advanced** → upload a logo or provide an icon URL
-6. Click **Save**
+1. *(Optional)* Add a custom icon under **Advanced** → upload a logo or provide an icon URL
+2. Click **Save**
 
 ### 11.3 Assign Groups
 
 By default, a Premium App is visible to **all users** in the org. To restrict access to specific teams:
 
 1. Stay on the integration's **Configuration** tab
-2. Go to the **Groups** section (or **Assigned Groups**, depending on your Genesys Cloud version)
+2. Go to the **Group Filtering** section
 3. Click **Add Group** and search for the Genesys Cloud group(s) that should have access
 4. Add each group (e.g. `Supervisors`, `QA Team`, `Contact Centre Leads`)
 5. Click **Save**
 
 > **How it works:** Only members of the assigned groups will see the app in their Genesys Cloud sidebar / Apps menu. If no groups are assigned, all users in the org can see it.
->
-> **Creating a group (if needed):**
-> 1. Go to **Admin → Groups**
-> 2. Click **Create Group**
-> 3. Name it (e.g. `Agent Copilot Users`), set visibility to **Members Only** or **Public**
-> 4. Add the users who should have access
-> 5. Save, then come back to the integration and assign this group
 
 ### 11.4 Activate the Integration
 
-1. Return to the integration overview (or the **Details** tab)
-2. Toggle the **Status** switch to **Active**
-3. Click **Save** (or confirm the activation prompt)
+1. Click **Save & Activate**
 
 The app will now appear in the Genesys Cloud client for users in the assigned groups.
 

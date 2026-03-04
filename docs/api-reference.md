@@ -123,6 +123,7 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 | Screen recordings | `WEBM` |
 
 **Retry behaviour:**
+
 - **Stub fetch** (Load Recordings button): retries up to 2 additional times with 3-second delay if no stubs are returned (Genesys may not have indexed the recording yet).
 - **Transcoding** (Part buttons): retries up to 4 additional times with 3-second delay if no `mediaUri` is returned (transcoding may still be in progress for long recordings).
 
