@@ -1207,7 +1207,14 @@ export async function render({ route, me, api }) {
     loadBtn.textContent = "🎧 Load Recordings";
 
     const fetchStubs = async () => {
-      const stubs = await api.getConversationRecordings(convId);
+      let stubs;
+      try {
+        stubs = await api.getConversationRecordings(convId);
+      } catch (e) {
+        // 404 means the conversation has no recordings — treat as empty
+        if (/\b404\b/.test(e.message)) return [];
+        throw e;
+      }
       const stubList = Array.isArray(stubs)
         ? stubs
         : Array.isArray(stubs?.entities) ? stubs.entities
