@@ -79,7 +79,7 @@ Each row represents one interaction:
 | Column | Description |
 | --- | --- |
 | **Time** | When the conversation started |
-| **Agent** | The agent who handled the interaction |
+| **Agent** | The agent(s) who handled the interaction (comma-separated if transferred) |
 | **Queue** | The queue the interaction was routed through |
 | **Media** | Communication type (voice, chat, email, etc.) |
 | **Duration** | Handle time |
@@ -142,6 +142,8 @@ The **Checklists** section shows every checklist item for the interaction:
 
 Each item may also show a description underneath explaining what the checklist item covers.
 
+**Transferred conversations:** If the conversation was transferred between agents, checklists from **all** agents are shown. Each checklist title includes the owning agent’s name — e.g. "Billing Support (Agent: Alice)".
+
 Metadata at the top shows the checklist name, when evaluation started, and when it was finalised.
 
 ### 4.3 Conversation Summaries
@@ -160,7 +162,7 @@ The **Conversation Summary** section (collapsed by default) shows the AI-generat
 - The edited version with a **✏️ Edited** badge
 - The original text shown with ~~strikethrough~~ below it
 
-**Multiple summaries:** For transferred calls, multiple summaries may appear (one per call leg), labelled "Summary 1 of N", "Summary 2 of N", etc.
+**Multiple summaries:** For transferred calls, multiple summaries may appear (one per call leg), labelled "Summary 1 of N", "Summary 2 of N", etc., each showing the owning agent’s name.
 
 **Additional topics:** The AI may detect additional topics beyond Reason/Resolution/Followup. These are rendered dynamically with their own labels.
 
@@ -188,7 +190,7 @@ The exported file contains three sheets:
 | --- | --- |
 | **Summary** | Aggregated completion statistics per agent, queue, and checklist (total, complete, incomplete, completion %) |
 | **Interactions** | One row per interaction with conversation ID, time, agent, queue, media, duration, checklist name, wrap-up code, and status |
-| **Checklist Items** | One row per checklist item with conversation ID, checklist name, item name, description, agent ticked, AI ticked, and important flag |
+| **Checklist Items** | One row per checklist item with conversation ID, checklist name, agent name, item name, description, agent ticked, AI ticked, and important flag |
 
 > **Pop-up blocker:** The export opens in a new tab. If your browser blocks it, allow pop-ups for the app's URL and try again.
 

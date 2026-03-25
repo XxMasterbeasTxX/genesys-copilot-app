@@ -104,9 +104,9 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
-| `/api/v2/conversations/{conversationId}` | GET | Fetch full conversation (participants, communications). Used to find agent communication IDs. | `conversation:communication:view` |
-| `/api/v2/conversations/{conversationId}/communications/{communicationId}/agentchecklists` | GET | Fetch agent checklist data for a specific communication. Tried for each agent communication until data is found. | `conversation:communication:view` |
-| `/api/v2/conversations/{conversationId}/summaries` | GET | Fetch AI-generated conversation summaries (headline, reason, resolution, followup). | `conversation:summary:view` |
+| `/api/v2/conversations/{conversationId}` | GET | Fetch full conversation (participants, communications). Used to find agent communication IDs and build the communication-to-agent mapping. | `conversation:communication:view` |
+| `/api/v2/conversations/{conversationId}/communications/{communicationId}/agentchecklists` | GET | Fetch agent checklist data for a specific communication. Called for **every** agent communication to collect all checklists (e.g. across transfers). Each checklist is tagged with the owning agent's name. | `conversation:communication:view` |
+| `/api/v2/conversations/{conversationId}/summaries` | GET | Fetch AI-generated conversation summaries (headline, reason, resolution, followup). Session summaries are tagged with the owning agent via communication ID mapping. | `conversation:summary:view` |
 
 ### 2.6 Recordings
 
@@ -147,8 +147,8 @@ The app loads two external resources:
 ### What the app reads
 
 - Conversation metadata (timestamps, participants, queue, media type, duration, wrap-up codes)
-- Agent copilot checklist items and tick states (agent vs AI)
-- AI-generated conversation summaries (headline, reason, resolution, followup)
+- Agent copilot checklist items and tick states (agent vs AI) — all checklists across all agent communications (including transfers)
+- AI-generated conversation summaries (headline, reason, resolution, followup) — tagged with owning agent name
 - Recording audio/video via presigned URLs (streamed directly from Genesys S3 to the browser)
 - Queue names, agent names, wrap-up code names (for display)
 

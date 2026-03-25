@@ -418,6 +418,7 @@ Run through these checks after deployment:
 - [ ] Click a period preset or set custom dates (max 31 days) and click Search
 - [ ] Confirm interactions appear and enrich with checklist data
 - [ ] Click a row with a checklist → verify drill-down shows checklist items with separate **Agent** and **AI** tick indicators (green ✓ / red ✗)
+- [ ] For transferred conversations, verify all agents are shown in the **Agent** column (comma-separated) and each checklist in the drill-down shows its owning agent name
 - [ ] Verify the Interaction Detail panel opens with three collapsible sections: **🎧 Recording** (expanded), **Checklists** (expanded), **Conversation Summary** (collapsed)
 
 ### Recordings (if recording permissions are configured)
@@ -430,7 +431,7 @@ Run through these checks after deployment:
 - [ ] If the conversation has an AI-generated summary, verify it appears in the drill-down panel (headline, reason, resolution, followup, full text)
 - [ ] If the agent edited any summary fields, verify the edited version shows a ✏️ Edited badge and the original appears with strikethrough
 - [ ] Verify additional AI-detected topics beyond reason/resolution/followup are rendered dynamically
-- [ ] For transferred calls, verify multiple summaries are shown ("Summary 1 of N")
+- [ ] For transferred calls, verify multiple summaries are shown ("Summary 1 of N") with owning agent names
 
 ### Filters
 
