@@ -75,9 +75,14 @@ function extractDuration(participant) {
   return 0;
 }
 
-/** Find the agent participant in an analytics conversation record. */
+/** Find the first agent participant in an analytics conversation record. */
 function findAgentParticipant(conv) {
   return (conv.participants ?? []).find((p) => p.purpose === PURPOSE_AGENT);
+}
+
+/** Find ALL agent participants in an analytics conversation record. */
+function findAllAgentParticipants(conv) {
+  return (conv.participants ?? []).filter((p) => p.purpose === PURPOSE_AGENT);
 }
 
 /** Find the queueId from a participant's sessions/segments. */
@@ -663,23 +668,29 @@ export async function render({ route, me, api }) {
     const tbody = document.createElement("tbody");
 
     for (const conv of conversations) {
-      const agent = findAgentParticipant(conv);
+      const agents = findAllAgentParticipants(conv);
+      const agent = agents[0] ?? null;
       const queueId = agent ? extractQueueId(agent) : null;
       const queueName = queueId
         ? (queueNameCache.get(queueId) ?? queueId)
         : "—";
-      const userName = agent?.participantName
-        ?? (agent?.userId && userNameCache.get(agent.userId))
-        ?? agent?.userId
-        ?? "—";
+      // Show all agent names comma-separated
+      const agentNames = agents
+        .map((a) => a.participantName
+          ?? (a.userId && userNameCache.get(a.userId))
+          ?? a.userId)
+        .filter(Boolean);
+      const userName = agentNames.length ? agentNames.join(", ") : "—";
       const mediaType = agent ? extractMediaType(agent) : "—";
       const duration = agent ? extractDuration(agent) : 0;
-      const wrapUpCodes = agent ? resolveWrapUpNames(extractWrapUpCodes(agent), wrapUpNameCache) : [];
-      const wrapUpText = wrapUpCodes.length ? wrapUpCodes.join(", ") : "—";
+      const wrapUpCodes = agents.flatMap((a) => resolveWrapUpNames(extractWrapUpCodes(a), wrapUpNameCache));
+      const wrapUpText = wrapUpCodes.length ? [...new Set(wrapUpCodes)].join(", ") : "—";
 
-      // Cache user name from analytics data
-      if (agent?.userId && agent.participantName) {
-        userNameCache.set(agent.userId, agent.participantName);
+      // Cache user names from analytics data
+      for (const a of agents) {
+        if (a.userId && a.participantName) {
+          userNameCache.set(a.userId, a.participantName);
+        }
       }
 
       const tr = document.createElement("tr");
@@ -873,10 +884,22 @@ export async function render({ route, me, api }) {
       const agentParts = (fullConv.participants ?? []).filter(
         (p) => p.purpose === PURPOSE_AGENT,
       );
+
+      // Build a commId → agent name map so each checklist can be tagged
+      const commAgentMap = new Map();
+      for (const p of agentParts) {
+        const name = p.name ?? p.participantName
+          ?? (p.userId && userNameCache.get(p.userId))
+          ?? p.userId ?? "Unknown";
+        for (const k of MEDIA_KEYS) {
+          for (const c of p[k] ?? []) {
+            commAgentMap.set(c.id, name);
+          }
+        }
+      }
+
       // Communications live under media-specific keys, NOT a generic key.
-      const commIds = agentParts.flatMap((p) =>
-        MEDIA_KEYS.flatMap((k) => (p[k] ?? []).map((c) => c.id)),
-      );
+      const commIds = [...commAgentMap.keys()];
       if (!commIds.length) {
         // Still fetch summaries even when no agent communications
         let summaries = [];
@@ -903,7 +926,10 @@ export async function render({ route, me, api }) {
         console.debug(`[Summaries] No summaries for ${convId}:`, sumErr.message ?? sumErr);
       }
 
-      // Step 3: Try each communication until we find checklists
+      // Step 3: Collect checklists from ALL communications
+      let allChecklists = [];
+      let firstCommId = commIds[0] ?? null;
+
       for (const commId of commIds) {
         try {
           const checklistRes = await api.getConversationChecklists(convId, commId);
@@ -920,11 +946,14 @@ export async function render({ route, me, api }) {
             list = [];
           }
 
+          // Tag each checklist with the agent name for this communication
+          const agentName = commAgentMap.get(commId) ?? "Unknown";
+          for (const cl of list) {
+            cl._agentName = agentName;
+          }
+
           if (list.length) {
-            const completion = checklistCompletion(list);
-            enriched.set(convId, { checklists: list, communicationId: commId, completion, summaries });
-            updateRowEnrichment(convId);
-            return;
+            allChecklists.push(...list);
           }
         } catch (innerErr) {
           // 404 means no checklists for this communication – try next
@@ -932,13 +961,16 @@ export async function render({ route, me, api }) {
         }
       }
 
-      // None of the communications had checklists
-      enriched.set(convId, {
-        checklists: [],
-        communicationId: commIds[0],
-        completion: null,
-        summaries,
+      // Deduplicate by checklist ID (safety net for overlapping comms)
+      const seen = new Set();
+      allChecklists = allChecklists.filter((cl) => {
+        if (!cl.id || seen.has(cl.id)) return false;
+        seen.add(cl.id);
+        return true;
       });
+
+      const completion = allChecklists.length ? checklistCompletion(allChecklists) : null;
+      enriched.set(convId, { checklists: allChecklists, communicationId: firstCommId, completion, summaries });
       updateRowEnrichment(convId);
     } catch (err) {
       console.error(`[Checklists] enrichOne failed for ${convId}:`, err);
@@ -967,18 +999,22 @@ export async function render({ route, me, api }) {
         const info = enriched.get(convId);
         if (!info?.checklists?.length) continue;
 
-        const agent = findAgentParticipant(conv);
+        const agents = findAllAgentParticipants(conv);
+        const agent = agents[0] ?? null;
         const queueId = agent ? extractQueueId(agent) : null;
         const queueName = queueId ? (queueNameCache.get(queueId) ?? queueId) : "";
-        const userName = agent?.participantName
-          ?? (agent?.userId && userNameCache.get(agent.userId))
-          ?? agent?.userId
-          ?? "";
+        const agentNames = agents
+          .map((a) => a.participantName
+            ?? (a.userId && userNameCache.get(a.userId))
+            ?? a.userId)
+          .filter(Boolean);
+        const userName = agentNames.join(", ");
         const mediaType = agent ? extractMediaType(agent) : "";
         const duration = agent ? extractDuration(agent) : 0;
-        const wrapUpExport = agent
-          ? resolveWrapUpNames(extractWrapUpCodes(agent), wrapUpNameCache).join(", ")
-          : "";
+        const wrapUpExport = agents
+          .flatMap((a) => resolveWrapUpNames(extractWrapUpCodes(a), wrapUpNameCache))
+          .filter((v, i, arr) => arr.indexOf(v) === i)
+          .join(", ");
 
         interactionRows.push({
           "Conversation ID": convId,
@@ -1010,6 +1046,7 @@ export async function render({ route, me, api }) {
             itemRows.push({
               "Conversation ID": convId,
               "Checklist": cl.name ?? "",
+              "Agent": cl._agentName ?? "",
               "Item": item.name ?? "",
               "Description": item.description ?? "",
               "Agent Ticked": item.stateFromAgent === TICK_STATE.TICKED ? "Yes" : "No",
@@ -1365,7 +1402,10 @@ export async function render({ route, me, api }) {
 
       const title = document.createElement("h4");
       title.className = "checklist-drilldown__title";
-      title.textContent = cl.name || "Checklist";
+      const clLabel = cl.name || "Checklist";
+      title.textContent = cl._agentName
+        ? `${clLabel} (Agent: ${cl._agentName})`
+        : clLabel;
       section.append(title);
 
       // Meta line (status + dates)
