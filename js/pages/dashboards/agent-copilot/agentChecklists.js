@@ -164,6 +164,19 @@ function parseSummaries(res) {
   return out;
 }
 
+/**
+ * Tag each summary with `_agentName` based on its communication ID.
+ * Session summaries typically have a `communication.id` that maps to an agent.
+ */
+function tagSummariesWithAgent(summaries, commAgentMap) {
+  for (const s of summaries) {
+    const commId = s.communication?.id ?? s.communicationId ?? null;
+    if (commId && commAgentMap.has(commId)) {
+      s._agentName = commAgentMap.get(commId);
+    }
+  }
+}
+
 /* ── Main render ───────────────────────────────────────── */
 
 export async function render({ route, me, api }) {
@@ -906,6 +919,7 @@ export async function render({ route, me, api }) {
         try {
           const sumRes = await api.getConversationSummaries(convId);
           summaries = parseSummaries(sumRes);
+          tagSummariesWithAgent(summaries, commAgentMap);
         } catch (_) { /* no summaries */ }
         enriched.set(convId, {
           checklists: [],
@@ -922,6 +936,7 @@ export async function render({ route, me, api }) {
       try {
         const sumRes = await api.getConversationSummaries(convId);
         summaries = parseSummaries(sumRes);
+        tagSummariesWithAgent(summaries, commAgentMap);
       } catch (sumErr) {
         console.debug(`[Summaries] No summaries for ${convId}:`, sumErr.message ?? sumErr);
       }
@@ -1478,7 +1493,14 @@ export async function render({ route, me, api }) {
         if (summaries.length > 1) {
           const label = document.createElement("div");
           label.className = "checklist-drilldown__sum-label";
-          label.textContent = `Summary ${idx + 1} of ${summaries.length}`;
+          const labelParts = [`Summary ${idx + 1} of ${summaries.length}`];
+          if (s._agentName) labelParts.push(`Agent: ${s._agentName}`);
+          label.textContent = labelParts.join(" — ");
+          card.append(label);
+        } else if (s._agentName) {
+          const label = document.createElement("div");
+          label.className = "checklist-drilldown__sum-label";
+          label.textContent = `Agent: ${s._agentName}`;
           card.append(label);
         }
 
