@@ -42,6 +42,7 @@ export const MS_PER_DAY = 86_400_000;
 export const MEDIA_KEYS = [
   "messages", "calls", "chats",
   "callbacks", "emails", "socialExpressions", "videos",
+  "cobrowsesessions", "screenshares", "internalMessages",
 ];
 
 /** Participant purpose value for agent participants. */
@@ -167,4 +168,5 @@ export const LABELS = Object.freeze({
   badgeComplete: "✅ Complete",
   badgeIncomplete: "⚠️ Incomplete",
   badgeNone: "No checklist",
+  badgeError: "⚠ Error",
 });

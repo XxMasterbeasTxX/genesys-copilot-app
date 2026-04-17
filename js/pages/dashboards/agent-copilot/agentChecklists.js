@@ -849,8 +849,13 @@ export async function render({ route, me, api }) {
 
     if (!info || !info.checklists?.length) {
       nameCell.textContent = "—";
-      statusCell.innerHTML =
-        `<span class="checklist-badge checklist-badge--none">${LABELS.badgeNone}</span>`;
+      if (info?._error) {
+        statusCell.innerHTML =
+          `<span class="checklist-badge checklist-badge--error" title="${escapeHtml(info._error)}">${LABELS.badgeError}</span>`;
+      } else {
+        statusCell.innerHTML =
+          `<span class="checklist-badge checklist-badge--none">${LABELS.badgeNone}</span>`;
+      }
       return;
     }
 
@@ -880,9 +885,16 @@ export async function render({ route, me, api }) {
     const withChecklist = [...enriched.values()].filter(
       (e) => e.checklists?.length,
     ).length;
-    statusEl.textContent =
+    const withError = [...enriched.values()].filter(
+      (e) => e._error,
+    ).length;
+    let statusText =
       `${total} interaction${total !== 1 ? "s" : ""} — ` +
       `${withChecklist} with checklist data`;
+    if (withError) {
+      statusText += ` — ${withError} failed (hover badge for details)`;
+    }
+    statusEl.textContent = statusText;
 
     // Show export button once enrichment is done
     exportBtn.hidden = !withChecklist;
@@ -971,16 +983,23 @@ export async function render({ route, me, api }) {
             allChecklists.push(...list);
           }
         } catch (innerErr) {
-          // 404 means no checklists for this communication – try next
-          console.debug(`[Checklists] No data on comm ${commId} for ${convId}:`, innerErr.message ?? innerErr);
+          // 404 = no checklists for this communication — expected, try next.
+          // Anything else (429, 500, network) is a real error — log visibly.
+          const is404 = innerErr.message?.includes("404");
+          if (is404) {
+            console.debug(`[Checklists] No data on comm ${commId} for ${convId}`);
+          } else {
+            console.warn(`[Checklists] Error fetching comm ${commId} for ${convId}:`, innerErr.message ?? innerErr);
+          }
         }
       }
 
       // Deduplicate by checklist ID (safety net for overlapping comms)
       const seen = new Set();
       allChecklists = allChecklists.filter((cl) => {
-        if (!cl.id || seen.has(cl.id)) return false;
-        seen.add(cl.id);
+        const key = cl.id ?? cl.name;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
         return true;
       });
 
@@ -994,6 +1013,7 @@ export async function render({ route, me, api }) {
         communicationId: null,
         completion: null,
         summaries: [],
+        _error: err.message ?? String(err),
       });
       updateRowEnrichment(convId);
     }
