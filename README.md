@@ -11,6 +11,7 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 - **Completion Chart** — Bar chart showing complete vs incomplete checklist counts (Chart.js v4).
 - **Excel Export** — Two-sheet XLSX export (interactions + checklist items) via SheetJS.
 - **Cascading Filters** — Select a copilot → queues cascade → agents cascade. Status filters (All / Completed / Incomplete / Summaries) with an Agent Checked toggle.
+- **Rate-Limit Handling** — Global request throttle (5 concurrent, 210 ms gap) and automatic retry with exponential backoff on 429/5xx responses.
 - **Light / Dark Theme** — Automatically follows the OS / browser colour scheme.
 - **OAuth PKCE** — Authorization Code + PKCE flow with cross-tab session handoff. No client secret needed.
 - **Premium App Ready** — Can be embedded inside the Genesys Cloud client as an iframe.

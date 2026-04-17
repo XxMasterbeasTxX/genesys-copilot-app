@@ -300,8 +300,17 @@ This file contains all feature-level tunables and labels for the Agent Checklist
 | `QUERY_PAGE_SIZE` | `100` | Max conversations per analytics query page |
 | `ENRICHMENT_BATCH` | `10` | Number of conversations enriched in parallel |
 | `QUEUE_RESOLVE_BATCH` | `10` | Number of queue-name lookups run in parallel |
-| `MEDIA_KEYS` | 7 media types | Communication keys to extract from conversation participants |
+| `MEDIA_KEYS` | 10 media types | Communication keys to extract from conversation participants (`calls`, `callbacks`, `chats`, `emails`, `messages`, `videos`, `cobrowsesessions`, `screenshares`, `socialExpressions`, `internalMessages`) |
 | `TICK_STATE` | `Ticked/Unticked` | API tick state values (frozen enum) |
+
+**API throttle & retry** (configured in `js/services/apiClient.js`):
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `MAX_CONCURRENT` | `5` | Maximum concurrent API requests (global semaphore) |
+| `MIN_REQUEST_GAP_MS` | `210` | Minimum milliseconds between consecutive requests (~285 req/min) |
+| `MAX_RETRIES` | `3` | Retries on 429 (rate-limited) and 5xx responses |
+| `RETRY_BASE_MS` | `1000` | Base delay for exponential backoff (1 s → 2 s → 4 s). Respects the `Retry-After` header when present. |
 | `STATUS_FILTER` | `all/complete/incomplete` | Client-side filter values (frozen enum) |
 
 **Chart configuration** (`CHART_CONFIG`):

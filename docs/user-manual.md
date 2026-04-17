@@ -85,7 +85,7 @@ Each row represents one interaction:
 | **Duration** | Handle time |
 | **Checklist** | Name of the copilot checklist (shows "…" while loading, "—" if none) |
 | **Wrapup** | Wrap-up code(s) applied by the agent |
-| **Status** | Completion status: **Complete** (green), **Incomplete** (amber), or **No checklist** (grey) |
+| **Status** | Completion status: **Complete** (green), **Incomplete** (amber), **No checklist** (grey), or **⚠ Error** (red, hover for details) |
 
 > After the table loads, the app automatically fetches checklist data in the background. You'll see the Checklist and Status columns update as data arrives.
 
@@ -239,6 +239,10 @@ No assistants with Agent Copilot enabled exist in your Genesys Cloud organisatio
 ### Why do some interactions show "No checklist"?
 
 Not all conversations use copilot checklists. "No checklist" means the copilot did not generate a checklist for that interaction, or your role lacks the `conversation:communication:view` permission.
+
+### Why do some interactions show a red "⚠ Error" badge?
+
+The app could not fetch checklist data for that interaction — usually because the Genesys Cloud API returned a temporary error (rate limit or server error). The app retries automatically up to 3 times. Hover over the badge to see the specific error message. Try searching again; if the error persists, contact your administrator.
 
 ### Why is the "Summaries" filter showing fewer interactions?
 

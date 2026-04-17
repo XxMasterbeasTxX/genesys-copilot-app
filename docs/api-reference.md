@@ -122,10 +122,38 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 | Audio (calls) | `MP3` |
 | Screen recordings | `WEBM` |
 
-**Retry behaviour:**
+**Retry behaviour (recordings only):**
 
 - **Stub fetch** (Load Recordings button): retries up to 2 additional times with 3-second delay if no stubs are returned (Genesys may not have indexed the recording yet).
 - **Transcoding** (Part buttons): retries up to 4 additional times with 3-second delay if no `mediaUri` is returned (transcoding may still be in progress for long recordings).
+
+### 2.7 Global Request Throttle & Retry
+
+All API calls made via `apiClient.request()` are subject to a global throttle and automatic retry mechanism. This prevents the app from exceeding Genesys Cloud's rate limits (~300 requests/minute) during bulk operations such as checklist enrichment.
+
+**Throttle (proactive):**
+
+| Setting | Value | Description |
+| --- | --- | --- |
+| `MAX_CONCURRENT` | `5` | Maximum in-flight requests at any time (semaphore) |
+| `MIN_REQUEST_GAP_MS` | `210` | Minimum gap between consecutive request starts (~285 req/min) |
+
+Requests that exceed the concurrency limit are queued and dispatched in FIFO order as slots become available.
+
+**Retry (reactive):**
+
+| Setting | Value | Description |
+| --- | --- | --- |
+| `MAX_RETRIES` | `3` | Maximum retry attempts per request |
+| `RETRY_BASE_MS` | `1000` | Base backoff delay (doubles each attempt: 1 s → 2 s → 4 s) |
+| Retryable status codes | `429`, `500`, `502`, `503`, `504` | Rate-limited or server errors |
+| `Retry-After` header | Respected | If the API returns a `Retry-After` header, the longer of the header value or the exponential backoff is used |
+
+Non-retryable errors (4xx other than 429) are thrown immediately.
+
+**Error visibility:**
+
+When enrichment of a specific conversation fails after all retries, the results table shows a red **⚠ Error** badge with a tooltip describing the failure. The status bar shows the total count of errors alongside the normal completion summary.
 
 ---
 
