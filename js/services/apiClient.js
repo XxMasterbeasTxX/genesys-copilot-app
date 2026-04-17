@@ -5,43 +5,91 @@ const MAX_RETRIES = 3;
 /** Base delay in ms before the first retry (doubled each attempt). */
 const RETRY_BASE_MS = 1000;
 
+// ── Global request throttle ──────────────────────────────────
+/** Max concurrent in-flight API requests. */
+const MAX_CONCURRENT = 5;
+/** Minimum gap between request starts (ms). ~5 req/s = 200ms gap. */
+const MIN_REQUEST_GAP_MS = 210;
+
+let inFlight = 0;
+let lastRequestTime = 0;
+const waitQueue = [];
+
+/** Acquire a throttle slot — resolves when it's safe to send. */
+function acquireSlot() {
+  return new Promise((resolve) => {
+    const tryAcquire = () => {
+      const now = Date.now();
+      const gap = MIN_REQUEST_GAP_MS - (now - lastRequestTime);
+      if (inFlight < MAX_CONCURRENT && gap <= 0) {
+        inFlight++;
+        lastRequestTime = Date.now();
+        resolve();
+      } else {
+        const delay = Math.max(gap, 50);
+        setTimeout(tryAcquire, delay);
+      }
+    };
+
+    if (inFlight < MAX_CONCURRENT) {
+      tryAcquire();
+    } else {
+      waitQueue.push(tryAcquire);
+    }
+  });
+}
+
+/** Release a throttle slot and wake next waiter. */
+function releaseSlot() {
+  inFlight--;
+  if (waitQueue.length) {
+    const next = waitQueue.shift();
+    next();
+  }
+}
+
 export function createApiClient(getAccessToken) {
   async function request(path, { method = "GET", headers = {}, body } = {}) {
     const token = getAccessToken();
     if (!token) throw new Error("No access token available");
 
-    for (let attempt = 0; ; attempt++) {
-      const res = await fetch(`${CONFIG.apiBase}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      });
+    await acquireSlot();
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const res = await fetch(`${CONFIG.apiBase}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            ...headers,
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
 
-      // Retry on 429 (rate-limit) and 5xx (server errors)
-      if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-        const retryAfter = res.headers.get("retry-after");
-        const delayMs = retryAfter
-          ? Math.min(parseFloat(retryAfter) * 1000, 30_000)
-          : RETRY_BASE_MS * 2 ** attempt;
-        console.warn(
-          `[API] ${res.status} on ${method} ${path} — retry ${attempt + 1}/${MAX_RETRIES} in ${delayMs}ms`,
-        );
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
+        // Retry on 429 (rate-limit) and 5xx (server errors)
+        if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+          const retryAfter = res.headers.get("retry-after");
+          const delayMs = retryAfter
+            ? Math.min(parseFloat(retryAfter) * 1000, 30_000)
+            : RETRY_BASE_MS * 2 ** attempt;
+          console.warn(
+            `[API] ${res.status} on ${method} ${path} — retry ${attempt + 1}/${MAX_RETRIES} in ${delayMs}ms`,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`API ${method} ${path} failed: ${res.status} ${res.statusText} ${text}`);
+        }
+
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) return null;
+        return res.json();
       }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`API ${method} ${path} failed: ${res.status} ${res.statusText} ${text}`);
-      }
-
-      const contentType = res.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) return null;
-      return res.json();
+    } finally {
+      releaseSlot();
     }
   }
 

@@ -1,0 +1,281 @@
+============================================================
+  Agent Copilot App — Code Changes (2026-04-17)
+  Fix: Missing checklist data for some interactions
+============================================================
+
+PROBLEM
+-------
+Some interactions that have checklist data in the Genesys Cloud
+API Explorer were showing "No checklist" in the app. The root
+cause was that API errors (429 rate limits, 5xx server errors,
+network timeouts) during the background enrichment phase were
+silently swallowed — the app treated them identically to "no
+checklist data exists."
+
+With 10 conversations enriched in parallel (each making 2–3 API
+calls), 20–30 requests fire in rapid succession, which can
+trigger Genesys Cloud rate limiting (HTTP 429).
+
+
+CHANGES
+-------
+
+4 files changed, 75 insertions, 24 deletions.
+
+
+1. js/services/apiClient.js — API retry with backoff
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Added automatic retry logic to the core API request function:
+  - Retries up to 3 times on HTTP 429 (rate-limited) and 5xx
+    (server error) responses
+  - Respects the Retry-After header when present
+  - Uses exponential backoff: 1s → 2s → 4s
+  - Logs each retry to the browser console as a warning
+
+BEFORE:
+  A single failed API call would immediately throw an error.
+
+AFTER:
+  Rate-limited or server-errored calls are retried automatically
+  before failing, significantly reducing silent data loss.
+
+
+2. js/pages/dashboards/agent-copilot/agentChecklists.js — Error visibility
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+a) Error badge on failed rows:
+   Rows where enrichment failed now show a red "⚠ Error" badge
+   instead of "No checklist". Hovering the badge shows the actual
+   error message (e.g. "API GET ... failed: 429 Too Many Requests").
+
+b) Error count in status line:
+   After enrichment completes, the status line now reports how many
+   interactions failed, e.g.:
+   "42 interactions — 38 with checklist data — 4 failed (hover badge
+   for details)"
+
+c) Better inner error handling:
+   The per-communication checklist fetch now distinguishes genuine
+   404s (no checklist exists — expected) from other errors (429, 500,
+   network — logged as console warnings instead of debug messages).
+
+d) Deduplication fix:
+   The checklist deduplication filter previously dropped any checklist
+   without an `id` field. Now falls back to the checklist `name` as
+   the dedup key, preventing valid data from being silently discarded.
+
+
+3. js/pages/dashboards/agent-copilot/checklistConfig.js — Missing media keys
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Added 3 missing communication media types to MEDIA_KEYS:
+  - cobrowsesessions
+  - screenshares
+  - internalMessages
+
+Without these, if an agent's communication was nested under one of
+these keys, its communication ID would never be extracted and no
+checklist API call would be made.
+
+Added the "badgeError" label for the new error badge UI.
+
+
+4. css/styles.css — Error badge styling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Added styling for the new .checklist-badge--error class:
+  - Dark theme: red text (#f87171) on subtle red background
+  - Light theme: red text (#dc2626) on subtle red background
+  - cursor: help (indicates hoverable tooltip)
+
+
+FULL DIFF
+---------
+
+diff --git a/css/styles.css b/css/styles.css
+index 5196d02..7eab284 100644
+--- a/css/styles.css
++++ b/css/styles.css
+@@ -482,6 +482,11 @@ body {
+   color: #facc15;
+   background: rgba(250,204,21,0.12);
+ }
++.checklist-badge--error {
++  color: #f87171;
++  background: rgba(248,113,113,0.12);
++  cursor: help;
++}
+
+ /* ── Drill-down panel ────────────────────────────────────── */
+ .checklist-drilldown {
+@@ -895,6 +900,10 @@ body {
+     color: #ca8a04;
+     background: rgba(202,138,4,0.10);
+   }
++  .checklist-badge--error {
++    color: #dc2626;
++    background: rgba(220,38,38,0.10);
++  }
+
+   /* Drill-down items */
+   .checklist-drilldown__item--ticked {
+
+diff --git a/js/services/apiClient.js b/js/services/apiClient.js
+index 357684f..db13331 100644
+--- a/js/services/apiClient.js
++++ b/js/services/apiClient.js
+@@ -1,28 +1,48 @@
+ import { CONFIG } from "../config.js";
+
++/** Maximum number of retries for rate-limited (429) or server-error (5xx) responses. */
++const MAX_RETRIES = 3;
++/** Base delay in ms before the first retry (doubled each attempt). */
++const RETRY_BASE_MS = 1000;
++
+ export function createApiClient(getAccessToken) {
+   async function request(path, { method = "GET", headers = {}, body } = {}) {
+     const token = getAccessToken();
+     if (!token) throw new Error("No access token available");
+
+-    const res = await fetch(`${CONFIG.apiBase}${path}`, {
+-      method,
+-      headers: {
+-        Authorization: `Bearer ${token}`,
+-        "Content-Type": "application/json",
+-        ...headers,
+-      },
+-      body: body ? JSON.stringify(body) : undefined,
+-    });
+-
+-    if (!res.ok) {
+-      const text = await res.text().catch(() => "");
+-      throw new Error(`API ${method} ${path} failed: ${res.status} ${res.statusText} ${text}`);
+-    }
++    for (let attempt = 0; ; attempt++) {
++      const res = await fetch(`${CONFIG.apiBase}${path}`, {
++        method,
++        headers: {
++          Authorization: `Bearer ${token}`,
++          "Content-Type": "application/json",
++          ...headers,
++        },
++        body: body ? JSON.stringify(body) : undefined,
++      });
++
++      // Retry on 429 (rate-limit) and 5xx (server errors)
++      if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
++        const retryAfter = res.headers.get("retry-after");
++        const delayMs = retryAfter
++          ? Math.min(parseFloat(retryAfter) * 1000, 30_000)
++          : RETRY_BASE_MS * 2 ** attempt;
++        console.warn(
++          `[API] ${res.status} on ${method} ${path} — retry ${attempt + 1}/${MAX_RETRIES} in ${delayMs}ms`,
++        );
++        await new Promise((r) => setTimeout(r, delayMs));
++        continue;
++      }
+
+-    const contentType = res.headers.get("content-type") || "";
+-    if (!contentType.includes("application/json")) return null;
+-    return res.json();
++      if (!res.ok) {
++        const text = await res.text().catch(() => "");
++        throw new Error(`API ${method} ${path} failed: ${res.status} ${res.statusText} ${text}`);
++      }
++
++      const contentType = res.headers.get("content-type") || "";
++      if (!contentType.includes("application/json")) return null;
++      return res.json();
++    }
+   }
+
+diff --git a/js/pages/dashboards/agent-copilot/agentChecklists.js b/js/pages/dashboards/agent-copilot/agentChecklists.js
+index 48122d1..0aceb45 100644
+--- a/js/pages/dashboards/agent-copilot/agentChecklists.js
++++ b/js/pages/dashboards/agent-copilot/agentChecklists.js
+@@ -849,8 +849,13 @@ export async function render({ route, me, api }) {
+
+     if (!info || !info.checklists?.length) {
+       nameCell.textContent = "—";
+-      statusCell.innerHTML =
+-        `<span class="checklist-badge checklist-badge--none">${LABELS.badgeNone}</span>`;
++      if (info?._error) {
++        statusCell.innerHTML =
++          `<span class="checklist-badge checklist-badge--error" title="${escapeHtml(info._error)}">${LABELS.badgeError}</span>`;
++      } else {
++        statusCell.innerHTML =
++          `<span class="checklist-badge checklist-badge--none">${LABELS.badgeNone}</span>`;
++      }
+       return;
+     }
+
+@@ -880,9 +885,16 @@ export async function render({ route, me, api }) {
+     const withChecklist = [...enriched.values()].filter(
+       (e) => e.checklists?.length,
+     ).length;
+-    statusEl.textContent =
++    const withError = [...enriched.values()].filter(
++      (e) => e._error,
++    ).length;
++    let statusText =
+       `${total} interaction${total !== 1 ? "s" : ""} — ` +
+       `${withChecklist} with checklist data`;
++    if (withError) {
++      statusText += ` — ${withError} failed (hover badge for details)`;
++    }
++    statusEl.textContent = statusText;
+
+     // Show export button once enrichment is done
+     exportBtn.hidden = !withChecklist;
+@@ -971,16 +983,23 @@ export async function render({ route, me, api }) {
+             allChecklists.push(...list);
+           }
+         } catch (innerErr) {
+-          // 404 means no checklists for this communication – try next
+-          console.debug(`[Checklists] No data on comm ${commId} for ${convId}:`, innerErr.message ?? innerErr);
++          // 404 = no checklists for this communication — expected, try next.
++          // Anything else (429, 500, network) is a real error — log visibly.
++          const is404 = innerErr.message?.includes("404");
++          if (is404) {
++            console.debug(`[Checklists] No data on comm ${commId} for ${convId}`);
++          } else {
++            console.warn(`[Checklists] Error fetching comm ${commId} for ${convId}:`, innerErr.message ?? innerErr);
++          }
+         }
+       }
+
+       // Deduplicate by checklist ID (safety net for overlapping comms)
+       const seen = new Set();
+       allChecklists = allChecklists.filter((cl) => {
+-        if (!cl.id || seen.has(cl.id)) return false;
+-        seen.add(cl.id);
++        const key = cl.id ?? cl.name;
++        if (!key || seen.has(key)) return false;
++        seen.add(key);
+         return true;
+       });
+
+@@ -994,6 +1013,7 @@ export async function render({ route, me, api }) {
+         communicationId: null,
+         completion: null,
+         summaries: [],
++        _error: err.message ?? String(err),
+       });
+       updateRowEnrichment(convId);
+     }
+
+diff --git a/js/pages/dashboards/agent-copilot/checklistConfig.js b/js/pages/dashboards/agent-copilot/checklistConfig.js
+index 1022b3d..77621e4 100644
+--- a/js/pages/dashboards/agent-copilot/checklistConfig.js
++++ b/js/pages/dashboards/agent-copilot/checklistConfig.js
+@@ -42,6 +42,7 @@ export const MS_PER_DAY = 86_400_000;
+ export const MEDIA_KEYS = [
+   "messages", "calls", "chats",
+   "callbacks", "emails", "socialExpressions", "videos",
++  "cobrowsesessions", "screenshares", "internalMessages",
+ ];
+
+ /** Participant purpose value for agent participants. */
+@@ -167,4 +168,5 @@ export const LABELS = Object.freeze({
+   badgeComplete: "✅ Complete",
+   badgeIncomplete: "⚠️ Incomplete",
+   badgeNone: "No checklist",
++  badgeError: "⚠ Error",
+ });
