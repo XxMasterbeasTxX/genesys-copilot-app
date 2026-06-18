@@ -994,12 +994,15 @@ export async function render({ route, me, api }) {
         }
       }
 
-      // Deduplicate by checklist ID (safety net for overlapping comms)
+      // Deduplicate by checklist ID only (safety net for overlapping comms).
+      // A conversation can legitimately have multiple checklists with the SAME
+      // name (e.g. the same template run on each leg of a transfer), so we must
+      // NOT dedup by name. Checklists without an id are always kept.
       const seen = new Set();
       allChecklists = allChecklists.filter((cl) => {
-        const key = cl.id ?? cl.name;
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
+        if (!cl.id) return true;
+        if (seen.has(cl.id)) return false;
+        seen.add(cl.id);
         return true;
       });
 
