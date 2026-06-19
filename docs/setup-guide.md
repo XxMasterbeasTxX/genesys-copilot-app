@@ -428,6 +428,7 @@ Run through these checks after deployment:
 - [ ] Confirm interactions appear and enrich with checklist data
 - [ ] Click a row with a checklist → verify drill-down shows checklist items with separate **Agent** and **AI** tick indicators (green ✓ / red ✗)
 - [ ] For transferred conversations, verify all agents are shown in the **Agent** column (comma-separated) and each checklist in the drill-down shows its owning agent name
+- [ ] For a conversation where two or more agents ran the **same** checklist template, verify each agent's copy appears separately in the drill-down (one entry per agent, not merged into one)
 - [ ] Verify the Interaction Detail panel opens with three collapsible sections: **🎧 Recording** (expanded), **Checklists** (expanded), **Conversation Summary** (collapsed)
 
 ### Recordings (if recording permissions are configured)
