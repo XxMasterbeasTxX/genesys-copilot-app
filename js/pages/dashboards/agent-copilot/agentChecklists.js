@@ -910,12 +910,17 @@ export async function render({ route, me, api }) {
         (p) => p.purpose === PURPOSE_AGENT,
       );
 
-      // Build a commId → agent name map so each checklist can be tagged
+      // Build a commId → agent name map (used to tag summaries and as a
+      // fallback) and a userId → agent name map. Each checklist carries its
+      // own `agentId`, which is the reliable way to attribute it to the
+      // correct agent across transfers.
       const commAgentMap = new Map();
+      const userIdName = new Map();
       for (const p of agentParts) {
         const name = p.name ?? p.participantName
           ?? (p.userId && userNameCache.get(p.userId))
           ?? p.userId ?? "Unknown";
+        if (p.userId) userIdName.set(p.userId, name);
         for (const k of MEDIA_KEYS) {
           for (const c of p[k] ?? []) {
             commAgentMap.set(c.id, name);
@@ -973,10 +978,19 @@ export async function render({ route, me, api }) {
             list = [];
           }
 
-          // Tag each checklist with the agent name for this communication
-          const agentName = commAgentMap.get(commId) ?? "Unknown";
+          // Tag each checklist with its OWN owning agent. The endpoint returns
+          // every checklist for the conversation (not just this communication),
+          // so attribute by the checklist's own agentId rather than the
+          // communication we happened to query. Fall back to the communication's
+          // agent only when agentId is missing/unresolvable.
+          const commAgentName = commAgentMap.get(commId) ?? "Unknown";
           for (const cl of list) {
-            cl._agentName = agentName;
+            const byAgentId = cl.agentId
+              ? (userIdName.get(cl.agentId)
+                  ?? userNameCache.get(cl.agentId)
+                  ?? cl.agentId)
+              : null;
+            cl._agentName = byAgentId ?? commAgentName;
           }
 
           if (list.length) {
