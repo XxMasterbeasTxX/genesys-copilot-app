@@ -1008,15 +1008,21 @@ export async function render({ route, me, api }) {
         }
       }
 
-      // Deduplicate by checklist ID only (safety net for overlapping comms).
-      // A conversation can legitimately have multiple checklists with the SAME
-      // name (e.g. the same template run on each leg of a transfer), so we must
-      // NOT dedup by name. Checklists without an id are always kept.
+      // Deduplicate (safety net for overlapping comms). The same checklist
+      // INSTANCE can be returned by more than one communication query, so we
+      // must drop genuine repeats. However, `cl.id` is the checklist
+      // DEFINITION id — it is shared between different agents/legs that ran the
+      // same template (e.g. on each leg of a transfer). Deduping by id alone
+      // therefore wrongly merges Agent 1's and Agent 2's copies and keeps only
+      // the first. Key by id + owning agent + participant leg so each agent's
+      // copy survives while true duplicates still collapse. Checklists without
+      // an id are always kept.
       const seen = new Set();
       allChecklists = allChecklists.filter((cl) => {
         if (!cl.id) return true;
-        if (seen.has(cl.id)) return false;
-        seen.add(cl.id);
+        const key = `${cl.id}__${cl.agentId ?? ""}__${cl.participantId ?? ""}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
       });
 
