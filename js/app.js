@@ -29,8 +29,30 @@ function renderFatalError(message) {
   `;
 }
 
+function renderBlockedScreen(title, message) {
+  const outletEl = document.getElementById("appMain");
+  outletEl.innerHTML = `
+    <section class="card">
+      <h1 class="h1">${escapeHtml(title)}</h1>
+      <p class="p">${escapeHtml(message)}</p>
+    </section>
+  `;
+}
+
 (async function main() {
   setHeader({ authText: "Auth: starting…" });
+
+  // --- Resolve customer (multi-customer) ---
+  // If no valid `?org=` could be resolved to a known customer, hard-fail
+  // without attempting login.
+  if (!CONFIG.resolved) {
+    setHeader({ authText: "Auth: no organization" });
+    renderBlockedScreen(
+      "Organization not recognized",
+      "This application was opened without a valid organization. Please launch it from within your Genesys Cloud organization."
+    );
+    return;
+  }
 
   // --- Authenticate ---
   setHeader({ authText: "Auth: checking token / login…" });
@@ -38,6 +60,15 @@ function renderFatalError(message) {
 
   if (res.status === "redirecting") {
     setHeader({ authText: "Auth: redirecting…" });
+    return;
+  }
+
+  if (res.status === "org_mismatch") {
+    setHeader({ authText: "Auth: blocked" });
+    renderBlockedScreen(
+      "Access denied",
+      "Your account does not belong to the organization this link is configured for."
+    );
     return;
   }
 

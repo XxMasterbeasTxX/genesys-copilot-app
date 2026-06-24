@@ -159,6 +159,30 @@ async function usersMe(accessToken) {
   return json;
 }
 
+async function organizationsMe(accessToken) {
+  const resp = await fetch(`${CONFIG.apiBase}/api/v2/organizations/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(`/organizations/me failed (${resp.status}): ${JSON.stringify(json)}`);
+  return json;
+}
+
+/**
+ * Verify the logged-in user's org matches the one configured for this `?org=`.
+ * Throws an Error with code "ORG_MISMATCH" on mismatch.
+ * No-op when CONFIG.expectedOrgId is null (check disabled for this customer).
+ */
+async function verifyOrgOrThrow(accessToken) {
+  if (!CONFIG.expectedOrgId) return;
+  const org = await organizationsMe(accessToken);
+  if (org?.id !== CONFIG.expectedOrgId) {
+    const err = new Error("Logged-in organization does not match the configured organization.");
+    err.code = "ORG_MISMATCH";
+    throw err;
+  }
+}
+
 /**
  * Bootstraps auth exactly like your template:
  * - If returned with code: validate state, exchange, store token, clear URL, call /users/me
@@ -197,6 +221,12 @@ export async function ensureAuthenticatedWithMe() {
       sessionStorage.removeItem(K_OAUTH_STATE);
 
       const me = await usersMe(token.access_token);
+      try {
+        await verifyOrgOrThrow(token.access_token);
+      } catch (e) {
+        if (e && e.code === "ORG_MISMATCH") { clearAuthSession(); return { status: "org_mismatch" }; }
+        throw e;
+      }
       return { status: "authenticated", accessToken: token.access_token, me };
     } catch (e) {
       clearAuthSession();
@@ -210,6 +240,12 @@ export async function ensureAuthenticatedWithMe() {
   if (existing) {
     try {
       const me = await usersMe(existing);
+      try {
+        await verifyOrgOrThrow(existing);
+      } catch (e) {
+        if (e && e.code === "ORG_MISMATCH") { clearAuthSession(); return { status: "org_mismatch" }; }
+        throw e;
+      }
       return { status: "authenticated", accessToken: existing, me };
     } catch {
       clearAuthSession();
