@@ -29,6 +29,14 @@ export const CUSTOMERS = {
     orgId: "12354361-0531-4108-8a7f-d42b8828ae86",
   },
 
+  // Test organization (Ireland region).
+  testorgie: {
+    name: "TestOrgIE",
+    region: "mypurecloud.ie",
+    clientId: "1a30cee8-3b4f-4e1d-bb22-95092d9e4b01",
+    orgId: "fa184a47-28ac-4532-bf31-d8da9de9c8cf",
+  },
+
   // Example of an additional customer (remove or replace):
   // acme: {
   //   name: "Acme",
