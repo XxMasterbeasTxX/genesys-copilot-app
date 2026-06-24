@@ -24,7 +24,7 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 | Charts | [Chart.js v4](https://www.chartjs.org/) (CDN) |
 | Excel export | [SheetJS](https://sheetjs.com/) (`xlsx.full.min.js`, bundled) |
 | Auth | OAuth 2.0 Authorization Code + PKCE |
-| Hosting | Azure Static Web Apps (free tier) |
+| Hosting | Azure Static Web Apps |
 | CI/CD | GitHub Actions |
 
 ## Project Structure
@@ -60,16 +60,16 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 ├── docs/
 │   └── setup-guide.md          # Full deployment guide
 └── .github/workflows/
-    └── azure-static-web-apps.yml  # CI/CD pipeline
+    └── azure-static-web-apps-*.yml  # CI/CD pipelines (one per environment)
 ```
 
 ## Quick Start
 
 1. Clone the repo
 2. Create a Genesys Cloud OAuth client (Authorization Code, `routing` scope)
-3. Create an Azure Static Web App linked to this repo
-4. Update `js/config.js` with your region, Client ID, and SWA URL
-5. Set the SWA deployment token as a GitHub secret (`AZURE_STATIC_WEB_APPS_API_TOKEN`)
+3. Create an Azure Static Web App linked to this repo (Azure auto-creates the workflow and deploy-token secret)
+4. Update `js/config.js` with your region and Client ID (the redirect URI is derived automatically)
+5. Register the Static Web App URL as an Authorized redirect URI in the Genesys OAuth client
 6. Push to `main` — CI/CD deploys automatically
 
 See [docs/setup-guide.md](docs/setup-guide.md) for the complete step-by-step guide.
@@ -87,7 +87,7 @@ export const CONFIG = {
   apiBase: `https://api.${REGION}`,
   appName: "Agent Copilot",
   oauthClientId: "your-client-id-here",
-  oauthRedirectUri: "https://your-swa-url.azurestaticapps.net",
+  oauthRedirectUri: window.location.origin, // auto: the URL the app is served from
   oauthScopes: ["openid", "profile", "email", "routing"],
   router: { mode: "hash" }
 };
@@ -114,7 +114,14 @@ This app uses the logged-in user's own access token. Each user needs a Genesys C
 
 ## Deployment
 
-Push to `main` triggers automatic deployment via GitHub Actions — no build step involved. The app is served as static files from Azure Static Web Apps (free tier).
+The app uses a branch-per-environment model on Azure Static Web Apps — no build step involved:
+
+| Branch | Environment |
+| --- | --- |
+| `main` | DEV |
+| `production` | PROD |
+
+Pushing to `main` auto-deploys to DEV. Promote tested code to PROD by merging `main → production`. Because the redirect URI is derived from `window.location.origin`, the **same code** runs unchanged in both environments. See [docs/setup-guide.md](docs/setup-guide.md) for details.
 
 ## License
 
