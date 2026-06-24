@@ -27,6 +27,8 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 | Parameters | `response_type=code`, `client_id`, `redirect_uri`, `code_challenge` (S256), `state`, `scope` |
 | Scopes requested | `openid`, `profile`, `email`, `routing` |
 
+> The `redirect_uri` is the app's own origin (`window.location.origin`), so it automatically matches whichever URL the app is served from (DEV, PROD, or a customer host). Each such origin must be registered as an Authorized redirect URI on the Genesys OAuth client.
+
 ### 1.2 Token Exchange
 
 | Detail | Value |
