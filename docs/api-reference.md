@@ -1,6 +1,11 @@
 # Agent Copilot App — API Reference
 
-This document lists every external API call the app makes. All calls target the **Genesys Cloud Public API** and are made directly from the user's browser using their own OAuth access token. The app has **no backend** and does **not** store, cache, or transmit data to any third-party server.
+This document lists every external API call the app makes. They all ultimately target the **Genesys Cloud Public API** using the logged-in user's own OAuth access token, but they travel by **two paths**:
+
+- **Direct** — the browser calls Genesys (`https://api.{region}` / `https://login.{region}`) itself: OAuth login, identity (`/users/me`, `/organizations/me`), and recording playback.
+- **Via the BFF** — the browser calls the app's own first-party Azure Functions backend (`/api/*`), which calls Genesys **server-side** with the forwarded token: copilots, queues, agents, wrap-up codes, the analytics search, and per-conversation checklist + summary enrichment.
+
+The app uses **no third-party server**. The BFF is the app's own Azure Static Web Apps managed Functions; it holds no credentials, performs only read operations, and stores nothing.
 
 ---
 
@@ -51,15 +56,31 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 | OAuth state | `sessionStorage` | Transient (deleted after exchange) |
 | Cross-tab handoff | `localStorage` | Temporary (30-second TTL, then deleted) |
 
-> No tokens are written to cookies, IndexedDB, or sent to any server other than Genesys Cloud.
+> No tokens are written to cookies or IndexedDB. The token is sent only to Genesys Cloud (directly) and, for orchestration, forwarded to the app's own first-party Azure Functions backend (`/api/*`) via the `X-Genesys-Token` header. It is never sent to any third-party server.
 
 ---
 
 ## 2. API Calls
 
-All calls go to `https://api.{region}` with the header `Authorization: Bearer {access_token}`.
+**Direct calls** go to `https://api.{region}` with the header `Authorization: Bearer {access_token}`.
+
+**BFF calls** go to the app's own `/api/*` endpoints (same origin). The browser sends the forwarded token in a custom **`X-Genesys-Token`** header plus an **`X-Org-Key`** header — **not** `Authorization`, because Azure Static Web Apps reserves and overwrites that header on the managed-Functions hop. The BFF resolves the org and region **server-side** (from `api/data/customers.js`, never from the client) and then makes the Genesys calls below with `Authorization: Bearer {forwarded token}`.
+
+### BFF endpoint map
+
+| BFF endpoint | Method | Genesys calls made server-side | Returns |
+| --- | --- | --- | --- |
+| `/api/org-config` | GET | *(none — reads the server-side registry)* | Active org's public bootstrap (`clientId`, `region`, `orgId`) |
+| `/api/copilots` | GET | `GET /api/v2/assistants?expand=copilot` (cursor-paginated) | Copilot-enabled assistants `[{id,name}]` |
+| `/api/queues` | POST | `GET /api/v2/assistants/{id}/queues` per copilot | Distinct queues across the selected copilots |
+| `/api/agents` | POST | `GET /api/v2/routing/queues/{id}` + `/members` per queue | Distinct agents across the selected queues |
+| `/api/wrapup-codes` | GET | `GET /api/v2/routing/wrapupcodes` (paginated) | Wrap-up code id → name map |
+| `/api/conversations/search` | POST | `POST /api/v2/analytics/conversations/details/query` (paginated) | Conversation rows for the date range + filters |
+| `/api/conversations/enrich` | POST | `GET /api/v2/conversations/{id}`, `/agentchecklists`, `/summaries` per conversation | Per-conversation checklists + summaries |
 
 ### 2.1 User Identity
+
+> **Routing:** Direct (browser → Genesys, from `js/services/authService.js`).
 
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
@@ -68,12 +89,16 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 
 ### 2.2 Assistants (Copilot)
 
+> **Routing:** Via the BFF — the assistant list is fetched by `GET /api/copilots` and the per-assistant queues by `POST /api/queues`.
+
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
 | `/api/v2/assistants?pageSize=200&expand=copilot` | GET | List all assistants with copilot configuration. Auto-paginates using cursor (`after`). | `assistants:assistant:view` |
 | `/api/v2/assistants/{assistantId}/queues?pageSize=200` | GET | List queue IDs assigned to a specific assistant. Auto-paginates using cursor. | `assistants:queue:view` |
 
 ### 2.3 Routing
+
+> **Routing:** Via the BFF — queue-name resolution and queue members are fetched by `POST /api/agents`; wrap-up codes by `GET /api/wrapup-codes`.
 
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
@@ -82,6 +107,8 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 | `/api/v2/routing/wrapupcodes?pageNumber={n}&pageSize=500` | GET | Fetch all wrap-up codes (name resolution). Auto-paginates. Called once per search. | `routing:wrapupCode:view` |
 
 ### 2.4 Analytics
+
+> **Routing:** Via the BFF — `POST /api/conversations/search`. The page size and 31-day interval limit are enforced server-side.
 
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
@@ -107,6 +134,8 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 
 ### 2.5 Conversations & Checklists
 
+> **Routing:** Via the BFF — `POST /api/conversations/enrich` (the browser sends conversation IDs in batches; the server fetches the conversation, its agent checklists, and summaries, and returns the enriched result).
+
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
 | `/api/v2/conversations/{conversationId}` | GET | Fetch full conversation (participants, communications). Used to find agent communication IDs and build the communication-to-agent mapping. | `conversation:communication:view` |
@@ -114,6 +143,8 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 | `/api/v2/conversations/{conversationId}/summaries` | GET | Fetch AI-generated conversation summaries (headline, reason, resolution, followup). Session summaries are tagged with the owning agent via communication ID mapping. | `conversation:summary:view` |
 
 ### 2.6 Recordings
+
+> **Routing:** Direct (browser → Genesys). Recording stubs and presigned playback URLs are fetched straight from `api.{region}` so audio/video streams directly from Genesys S3 to the browser.
 
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
@@ -132,9 +163,9 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 - **Stub fetch** (Load Recordings button): retries up to 2 additional times with 3-second delay if no stubs are returned (Genesys may not have indexed the recording yet).
 - **Transcoding** (Part buttons): retries up to 4 additional times with 3-second delay if no `mediaUri` is returned (transcoding may still be in progress for long recordings).
 
-### 2.7 Global Request Throttle & Retry
+### 2.7 Request Throttle & Retry
 
-All API calls made via `apiClient.request()` are subject to a global throttle and automatic retry mechanism. This prevents the app from exceeding Genesys Cloud's rate limits (~300 requests/minute) during bulk operations such as checklist enrichment.
+All Genesys calls — whether made server-side by the BFF or directly by the browser — are subject to a throttle and automatic retry mechanism. This prevents exceeding Genesys Cloud's rate limits (~300 requests/minute) during bulk operations such as checklist enrichment. The BFF throttle lives in `api/src/shared/genesysClient.js`; the browser throttle (for direct calls such as recordings) lives in `js/services/apiClient.js`. Both use the same settings:
 
 **Throttle (proactive):**
 
@@ -187,11 +218,11 @@ The app loads two external resources:
 
 ### What the app does NOT do
 
-- **No data storage** — nothing is written to any database, file system, or cloud storage
-- **No data transmission** — data is never sent to any server other than Genesys Cloud (`api.{region}`)
+- **No data storage** — nothing is written to any database, file system, or cloud storage (the BFF is stateless and caches nothing)
+- **No third-party transmission** — data flows only between the browser, the app's own first-party Azure Functions backend (`/api/*`), and Genesys Cloud (`api.{region}`). No external/third-party server is involved.
 - **No cookies** — authentication uses `sessionStorage` only
 - **No telemetry** — no usage tracking, analytics, or error reporting services
-- **No write operations** — the app only reads data; it never creates, updates, or deletes anything in Genesys Cloud
+- **No write operations** — the app (browser and BFF alike) only reads data; it never creates, updates, or deletes anything in Genesys Cloud
 
 ### Excel export
 
@@ -208,7 +239,7 @@ The following domains must be accessible from the user's browser:
 | Domain | Port | Purpose |
 | --- | --- | --- |
 | `login.{region}` (e.g. `login.mypurecloud.de`) | 443 | OAuth authorization & token exchange |
-| `api.{region}` (e.g. `api.mypurecloud.de`) | 443 | All Genesys Cloud API calls |
+| `api.{region}` (e.g. `api.mypurecloud.de`) | 443 | Direct Genesys calls from the browser (identity, recordings); the BFF reaches Genesys server-side over the Azure network |
 | `apps.{region}` (e.g. `apps.mypurecloud.de`) | 443 | Required if embedded as a Premium App |
 | `cdn.jsdelivr.net` | 443 | Chart.js library (CDN) |
 | Your SWA hostname (e.g. `*.azurestaticapps.net`) | 443 | The app itself |
@@ -221,4 +252,4 @@ Recording audio/video is streamed from Genesys Cloud's internal presigned S3 URL
 
 ### CORS
 
-The app makes direct API calls from the browser. Genesys Cloud's API supports CORS for OAuth-authenticated requests from registered redirect URIs. No CORS proxy is needed.
+The browser makes direct Genesys API calls (login, identity, recordings) and calls the app's own `/api/*` BFF endpoints (same origin, so no CORS). Genesys Cloud's API supports CORS for OAuth-authenticated requests from registered redirect URIs, and the BFF's own Genesys calls are server-to-server (no CORS involved). No CORS proxy is needed.
