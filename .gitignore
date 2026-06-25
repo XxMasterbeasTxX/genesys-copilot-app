@@ -1,0 +1,13 @@
+# Azure Functions API (managed functions)
+api/node_modules/
+api/local.settings.json
+api/bin/
+api/obj/
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

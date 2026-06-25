@@ -1,6 +1,6 @@
 # Agent Copilot App
 
-A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conversation summaries, recordings, and completion analytics. No backend or build step required.
+A front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conversation summaries, recordings, and completion analytics. A small Azure Functions API (`api/`) serves per-org configuration; the front-end is plain ES modules with no build step.
 
 ---
 
@@ -14,7 +14,7 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 - **Rate-Limit Handling** — Global request throttle (5 concurrent, 210 ms gap) and automatic retry with exponential backoff on 429/5xx responses.
 - **Light / Dark Theme** — Automatically follows the OS / browser colour scheme.
 - **OAuth PKCE** — Authorization Code + PKCE flow with cross-tab session handoff. No client secret needed.
-- **Multi-Customer** — one deployment serves many Genesys orgs. The active org is resolved at runtime from a `?org=<key>` URL parameter against the `js/customers.js` registry, with a post-login org-match check and a hard-fail screen for unknown orgs.
+- **Multi-Customer** — one deployment serves many Genesys orgs. The active org is resolved at runtime from a `?org=<key>` URL parameter against a **server-side** registry (`api/data/customers.js`); the browser only ever receives its own org's public config via `GET /api/org-config`. Includes a post-login org-match check and a hard-fail screen for unknown orgs.
 - **Premium App Ready** — Can be embedded inside the Genesys Cloud client as an iframe.
 
 ## Tech Stack
@@ -22,6 +22,7 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 | Component | Technology |
 | --------- | ---------- |
 | Front-end | Vanilla JS (ES modules), CSS custom properties |
+| Backend | Azure Functions (Node, SWA managed) — per-org config endpoint |
 | Charts | [Chart.js v4](https://www.chartjs.org/) (CDN) |
 | Excel export | [SheetJS](https://sheetjs.com/) (`xlsx.full.min.js`, bundled) |
 | Auth | OAuth 2.0 Authorization Code + PKCE |
@@ -36,9 +37,8 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 ├── css/styles.css              # All styles (dark + light theme)
 ├── js/
 │   ├── app.js                  # Bootstrap & auth init
-│   ├── config.js               # Static app settings; resolves active customer
-│   ├── customers.js            # Customer registry (region/clientId/orgId per org)
-│   ├── orgContext.js           # Resolves the active org from ?org=
+│   ├── config.js               # Static app settings; fetches active customer config
+│   ├── orgContext.js           # Resolves the active org key from ?org=
 │   ├── nav.js                  # Sidebar renderer
 │   ├── navConfig.js            # Navigation tree definition
 │   ├── pageRegistry.js         # Lazy page loader
@@ -60,6 +60,14 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 │   └── services/
 │       ├── apiClient.js        # Genesys Cloud API wrapper
 │       └── authService.js      # OAuth PKCE + session management
+├── api/                        # Azure Functions API (SWA managed; server-side)
+│   ├── host.json
+│   ├── package.json
+│   ├── data/
+│   │   └── customers.js        # Customer registry — SERVER-SIDE, never shipped to the browser
+│   └── src/functions/
+│       └── orgConfig.js        # GET /api/org-config — returns the active org's public config
+├── staticwebapp.config.json    # SPA fallback + /api routing
 ├── docs/
 │   └── setup-guide.md          # Full deployment guide
 └── .github/workflows/
@@ -71,7 +79,7 @@ A standalone front-end dashboard for **Genesys Cloud Agent Copilot** — view ag
 1. Clone the repo
 2. Create a Genesys Cloud OAuth client (Authorization Code + PKCE, `routing` scope) **in the customer's org**
 3. Create an Azure Static Web App linked to this repo (Azure auto-creates the workflow and deploy-token secret)
-4. Add the customer to the registry in `js/customers.js` (region, Client ID, org GUID); the redirect URI is derived automatically
+4. Add the customer to the **server-side** registry in `api/data/customers.js` (region, Client ID, org GUID); the redirect URI is derived automatically
 5. Register the Static Web App URL as an Authorized redirect URI in the Genesys OAuth client, and set that org's integration Application URL to `…/?org=<key>`
 6. Push to `main` — CI/CD deploys automatically
 
@@ -79,11 +87,11 @@ See [docs/setup-guide.md](docs/setup-guide.md) for the complete step-by-step gui
 
 ## Configuration
 
-The app is **multi-customer aware**. Each Genesys org (customer) is one entry in the registry at `js/customers.js`, keyed by a short `org` key. The app resolves the active entry at runtime from the `?org=<key>` URL parameter:
+The app is **multi-customer aware**, and the registry lives **server-side**. Each Genesys org (customer) is one entry in `api/data/customers.js`, keyed by a short `org` key. At startup the browser calls `GET /api/org-config?org=<key>` and receives **only that org's** public bootstrap values (region + Client ID + org GUID) — the full customer list never reaches the browser:
 
 ```javascript
-// js/customers.js
-export const CUSTOMERS = {
+// api/data/customers.js  (server-side — never shipped to the browser)
+const CUSTOMERS = {
   demo: {
     name: "Demo Organization",
     region: "mypurecloud.de",
@@ -94,10 +102,12 @@ export const CUSTOMERS = {
 };
 
 // Fallback org key when ?org= is absent. Set to null to hard-fail instead.
-export const DEFAULT_ORG_KEY = "demo";
+const DEFAULT_ORG_KEY = "demo";
+
+module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
 ```
 
-`js/config.js` then derives `region`, `authHost`, `apiBase`, and `oauthClientId` from the resolved customer and always uses `oauthRedirectUri: window.location.origin`. You normally don't edit `config.js` per customer — you just add a registry line and point that org's integration at `…/?org=<key>`.
+On the client, `js/config.js` fetches that endpoint and derives `region`, `authHost`, `apiBase`, and `oauthClientId`, always using `oauthRedirectUri: window.location.origin`. To onboard a customer you add a registry line on the server and point that org's integration at `…/?org=<key>` — no client changes.
 
 Feature-level settings (date ranges, chart colours, export columns, labels) are in `js/pages/dashboards/agent-copilot/checklistConfig.js`.
 
