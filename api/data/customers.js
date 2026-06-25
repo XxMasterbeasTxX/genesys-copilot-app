@@ -1,25 +1,27 @@
 // ============================================================================
-// Customer registry (multi-customer support)
+// Customer registry (server-side, multi-customer support)
 // ----------------------------------------------------------------------------
-// One entry per Genesys Cloud organization that uses this app. The app resolves
-// which entry to use from the `?org=<key>` query parameter on the URL — which
-// you configure per org in that org's Genesys "Client Application" integration
-// (the Application URL field), e.g. https://<app-origin>/?org=acme
+// SERVER-SIDE ONLY. This file lives in the Azure Functions API and is NEVER
+// shipped to the browser. The front-end learns ONLY its own org's public
+// bootstrap values (region + clientId) via GET /api/org-config?org=<key> — it
+// never receives the full customer list.
+//
+// One entry per Genesys Cloud organization that uses this app. The active entry
+// is selected from the `?org=<key>` query parameter (configured per org in that
+// org's Genesys "Client Application" integration Application URL).
 //
 // For each customer you onboard:
 //   1. Create an OAuth client (Authorization Code + PKCE) in THEIR Genesys org.
-//   2. Add this app's origin as an Authorized redirect URI in that client
-//      (the redirect URI is the same shared origin for every customer).
+//   2. Add this app's origin(s) (DEV + PROD) as Authorized redirect URIs.
 //   3. Add one line below with their region, clientId, and org GUID.
 //   4. Set their integration's Application URL to: https://<app-origin>/?org=<key>
 //
-// NOTE: The OAuth clientId is PUBLIC in a PKCE flow (it is visible in the
-// browser). It is not a secret, so it lives safely in this file. Access is
-// protected by the fact that login must succeed against that specific org
-// (and, when `orgId` is set, by the post-login org-match check).
+// NOTE: The OAuth clientId is PUBLIC in a PKCE flow (it is handed to the browser
+// to start login, and is not a secret). Keeping the registry here hides the
+// full customer LIST and other orgs' details from the browser.
 // ============================================================================
 
-export const CUSTOMERS = {
+const CUSTOMERS = {
   // Demo organization — keeps DEV/PROD working today.
   demo: {
     name: "Demo Organization",
@@ -48,9 +50,11 @@ export const CUSTOMERS = {
 
 // ----------------------------------------------------------------------------
 // Rollout transition switch.
-// While integrations may not yet include `?org=<key>`, requests without an
-// `?org=` parameter fall back to this key so existing deployments keep working.
-// Set this to `null` to enforce a strict hard-fail when `?org=` is missing
+// When a request to /api/org-config arrives WITHOUT an `?org=` parameter, the
+// endpoint falls back to this key so existing deployments keep working. Set
+// this to null to enforce a strict hard-fail (404) when `?org=` is missing
 // (recommended once every org's integration Application URL includes ?org=).
 // ----------------------------------------------------------------------------
-export const DEFAULT_ORG_KEY = "demo";
+const DEFAULT_ORG_KEY = "demo";
+
+module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };

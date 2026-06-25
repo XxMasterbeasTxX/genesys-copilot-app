@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js";
+import { CONFIG, initConfig } from "./config.js";
 import { NAV_TREE, getFirstLeafUnder } from "./navConfig.js";
 import { createNav } from "./nav.js";
 import { Router } from "./router.js";
@@ -42,9 +42,12 @@ function renderBlockedScreen(title, message) {
 (async function main() {
   setHeader({ authText: "Auth: starting…" });
 
-  // --- Resolve customer (multi-customer) ---
+  // --- Resolve customer config from the backend (multi-customer) ---
+  // The customer registry is server-side; fetch only this org's public config.
   // If no valid `?org=` could be resolved to a known customer, hard-fail
   // without attempting login.
+  await initConfig();
+
   if (!CONFIG.resolved) {
     setHeader({ authText: "Auth: no organization" });
     renderBlockedScreen(

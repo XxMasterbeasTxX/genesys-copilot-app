@@ -18,7 +18,7 @@ This document lists every external API call the app makes. All calls target the 
 
 The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser-based OAuth flow. There is no client secret.
 
-> **Multi-customer:** before login, the app resolves which Genesys org to authenticate against from the `?org=<key>` URL parameter (mapped to a `clientId` + `region` in `js/customers.js`). After login it calls `/api/v2/organizations/me` and verifies the token's org GUID matches the configured `orgId` for that key; a mismatch blocks access. An unknown `?org=` is rejected before any login attempt.
+> **Multi-customer:** before login, the app resolves which Genesys org to authenticate against from the `?org=<key>` URL parameter. It calls the app's own backend (`GET /api/org-config?org=<key>`), which returns only that org's public bootstrap values (`clientId` + `region` + `orgId`) from a **server-side** registry (`api/data/customers.js`) — the full customer list never reaches the browser. After login the app calls `/api/v2/organizations/me` and verifies the token's org GUID matches the configured `orgId` for that key; a mismatch blocks access. An unknown `?org=` is rejected before any login attempt.
 
 ### 1.1 Authorization Redirect
 
