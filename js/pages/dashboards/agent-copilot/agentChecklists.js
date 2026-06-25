@@ -23,7 +23,6 @@ import {
   MAX_INTERVAL_DAYS,
   QUERY_PAGE_SIZE,
   ENRICHMENT_BATCH,
-  QUEUE_RESOLVE_BATCH,
   MS_PER_DAY,
   MEDIA_KEYS,
   PURPOSE_AGENT,
@@ -452,53 +451,25 @@ export async function render({ route, me, api }) {
     if (!selectedIds.size) return;
 
     try {
-      // Fetch queues for every selected assistant in parallel
-      const results = await Promise.all(
-        [...selectedIds].map((id) => api.getAssistantQueues(id)),
-      );
+      // Copilot→queue cascade (fan-out + name resolution) is server-side when
+      // backend orchestration is enabled; the direct client mirrors it 1:1.
+      const queueItems = await api.getQueuesForCopilots([...selectedIds]);
 
-      // Collect unique queue IDs
-      const queueIdSet = new Set();
-      for (const queues of results) {
-        for (const q of queues) queueIdSet.add(q.id);
-      }
-
-      if (!queueIdSet.size) {
+      if (!queueItems.length) {
         queueMs.setItems([]);
         statusEl.textContent = "No queues assigned to the selected copilot(s).";
         return;
       }
 
-      // Resolve queue names (parallel, with cache)
-      const queueItems = await resolveQueueNames([...queueIdSet]);
+      // Keep the local name cache warm for the results table + export.
+      for (const it of queueItems) queueNameCache.set(it.id, it.label);
+
       queueMs.setItems(queueItems);
       queueMs.setEnabled(true);
     } catch (err) {
       console.error("Failed to load assistant queues:", err);
       statusEl.textContent = `Error loading queues: ${err.message}`;
     }
-  }
-
-  /** Resolve an array of queue IDs to [{ id, label }], using cache. */
-  async function resolveQueueNames(ids) {
-    const uncached = ids.filter((id) => !queueNameCache.has(id));
-
-    // Fetch uncached in parallel batches
-    for (let i = 0; i < uncached.length; i += QUEUE_RESOLVE_BATCH) {
-      const batch = uncached.slice(i, i + QUEUE_RESOLVE_BATCH);
-      const results = await Promise.allSettled(
-        batch.map((id) => api.getQueue(id)),
-      );
-      results.forEach((r, idx) => {
-        const name =
-          r.status === "fulfilled" && r.value?.name
-            ? r.value.name
-            : batch[idx];
-        queueNameCache.set(batch[idx], name);
-      });
-    }
-
-    return ids.map((id) => ({ id, label: queueNameCache.get(id) ?? id }));
   }
 
   // ── Queue selection changed → cascade agents ───────────
@@ -509,31 +480,18 @@ export async function render({ route, me, api }) {
     if (!selectedQueueIds.size) return;
 
     try {
-      const results = await Promise.all(
-        [...selectedQueueIds].map((id) => api.getQueueMembers(id)),
-      );
+      // Queue→agent cascade (fan-out + de-dup) is server-side when backend
+      // orchestration is enabled; the direct client mirrors it 1:1.
+      const sorted = await api.getAgentsForQueues([...selectedQueueIds]);
 
-      // Collect unique agents across all selected queues
-      const agentMap = new Map();
-      for (const members of results) {
-        for (const m of members) {
-          const userId = m.id ?? m.user?.id;
-          const userName = m.name ?? m.user?.name ?? userId;
-          if (userId) {
-            agentMap.set(userId, userName);
-            userNameCache.set(userId, userName);
-          }
-        }
-      }
-
-      if (!agentMap.size) {
+      if (!sorted.length) {
         statusEl.textContent = "No agents found in the selected queue(s).";
         return;
       }
 
-      const sorted = [...agentMap.entries()]
-        .map(([id, label]) => ({ id, label }))
-        .sort((a, b) => a.label.localeCompare(b.label));
+      // Keep the local name cache warm for the results table + export.
+      for (const a of sorted) userNameCache.set(a.id, a.label);
+
       agentMs.setItems(sorted);
       agentMs.setEnabled(true);
     } catch (err) {
@@ -582,56 +540,69 @@ export async function render({ route, me, api }) {
 
     const interval = `${from.toISOString()}/${to.toISOString()}`;
 
-    // Build segment filter predicates
-    const copilotPredicates = [...copilotIds].map((id) => ({
-      dimension: "agentAssistantId",
-      value: id,
-    }));
-    const queuePredicates = [...queueIds].map((id) => ({
-      dimension: "queueId",
-      value: id,
-    }));
-
-    const segmentFilters = [
-      { type: "or", predicates: copilotPredicates },
-      { type: "or", predicates: queuePredicates },
-    ];
-
-    // Optional agent filter
-    if (agentIds.size) {
-      segmentFilters.push({
-        type: "or",
-        predicates: [...agentIds].map((id) => ({
-          dimension: "userId",
-          value: id,
-        })),
-      });
-    }
-
-    const body = {
-      interval,
-      order: "desc",
-      orderBy: "conversationStart",
-      segmentFilters,
-      paging: { pageSize: QUERY_PAGE_SIZE, pageNumber: 1 },
-    };
-
     try {
-      // Auto-paginate to collect ALL matching conversations
-      let page = 1;
-      for (;;) {
-        body.paging.pageNumber = page;
-        statusEl.textContent = page === 1
-          ? "Loading…"
-          : `Loading page ${page}…`;
+      if (api.searchConversations) {
+        // Backend orchestration: the analytics query shape + pagination run
+        // server-side; the browser only sends the selected filters + interval.
+        statusEl.textContent = "Loading…";
+        conversations = await api.searchConversations({
+          copilotIds: [...copilotIds],
+          queueIds: [...queueIds],
+          agentIds: [...agentIds],
+          fromIso: from.toISOString(),
+          toIso: to.toISOString(),
+        });
+      } else {
+        // Direct path: build the analytics query and auto-paginate here.
+        const copilotPredicates = [...copilotIds].map((id) => ({
+          dimension: "agentAssistantId",
+          value: id,
+        }));
+        const queuePredicates = [...queueIds].map((id) => ({
+          dimension: "queueId",
+          value: id,
+        }));
 
-        const res = await api.queryConversationDetails(body);
-        const batch = res?.conversations ?? [];
-        conversations.push(...batch);
+        const segmentFilters = [
+          { type: "or", predicates: copilotPredicates },
+          { type: "or", predicates: queuePredicates },
+        ];
 
-        // Stop when we received fewer than a full page or no results
-        if (batch.length < QUERY_PAGE_SIZE) break;
-        page++;
+        // Optional agent filter
+        if (agentIds.size) {
+          segmentFilters.push({
+            type: "or",
+            predicates: [...agentIds].map((id) => ({
+              dimension: "userId",
+              value: id,
+            })),
+          });
+        }
+
+        const body = {
+          interval,
+          order: "desc",
+          orderBy: "conversationStart",
+          segmentFilters,
+          paging: { pageSize: QUERY_PAGE_SIZE, pageNumber: 1 },
+        };
+
+        // Auto-paginate to collect ALL matching conversations
+        let page = 1;
+        for (;;) {
+          body.paging.pageNumber = page;
+          statusEl.textContent = page === 1
+            ? "Loading…"
+            : `Loading page ${page}…`;
+
+          const res = await api.queryConversationDetails(body);
+          const batch = res?.conversations ?? [];
+          conversations.push(...batch);
+
+          // Stop when we received fewer than a full page or no results
+          if (batch.length < QUERY_PAGE_SIZE) break;
+          page++;
+        }
       }
 
       if (!conversations.length) {
@@ -875,7 +846,28 @@ export async function render({ route, me, api }) {
     for (let i = 0; i < conversations.length; i += ENRICHMENT_BATCH) {
       if (signal?.aborted) return; // search was re-triggered
       const batch = conversations.slice(i, i + ENRICHMENT_BATCH);
-      await Promise.allSettled(batch.map((conv) => enrichOne(conv)));
+
+      if (api.enrichConversationBatch) {
+        // Backend orchestration: the whole batch is enriched server-side in a
+        // single call; the browser only stores the finished records.
+        try {
+          const records = await api.enrichConversationBatch(
+            batch.map((c) => c.conversationId),
+          );
+          for (const conv of batch) {
+            const rec = records?.[conv.conversationId];
+            if (rec) {
+              enriched.set(conv.conversationId, rec);
+              updateRowEnrichment(conv.conversationId);
+            }
+          }
+        } catch (err) {
+          console.error("[Checklists] batch enrichment failed:", err);
+        }
+      } else {
+        await Promise.allSettled(batch.map((conv) => enrichOne(conv)));
+      }
+
       if (signal?.aborted) return;
       applyTableFilter();
     }
@@ -1682,10 +1674,7 @@ export async function render({ route, me, api }) {
   statusEl.textContent = "Loading copilot assistants…";
 
   try {
-    const allAssistants = await api.getAllAssistants();
-    const copilotsEnabled = allAssistants.filter(
-      (a) => a.copilot?.enabled === true || a.copilot?.liveOnQueue === true,
-    );
+    const copilotsEnabled = await api.getCopilots();
 
     if (!copilotsEnabled.length) {
       statusEl.textContent =

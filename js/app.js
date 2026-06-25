@@ -11,7 +11,7 @@ import {
   getValidAccessToken,
   scheduleTokenRefresh,
 } from "./services/authService.js";
-import { createApiClient } from "./services/apiClient.js";
+import { createBffClient } from "./services/bffClient.js";
 
 function setHeader({ authText }) {
   document.getElementById("brandTitle").textContent = CONFIG.appName;
@@ -79,7 +79,9 @@ function renderBlockedScreen(title, message) {
   setHeader({ authText: `Auth: ok \u00B7 ${userName}` });
 
   // --- API client ---
-  const api = createApiClient(getValidAccessToken);
+  // All Genesys orchestration is routed through our own /api/* backend
+  // endpoints (token-forwarding); the browser never calls Genesys directly.
+  const api = createBffClient(getValidAccessToken, () => CONFIG.orgKey);
 
   // --- Session monitoring ---
   scheduleTokenRefresh({
