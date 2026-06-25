@@ -1,6 +1,6 @@
 # Agent Copilot App — Setup Guide
 
-Complete step-by-step guide for deploying the Agent Copilot app at a new customer environment. This is a **front-end app with a small managed-Functions API** — the front-end is plain ES modules (no build step), and the only backend is a lightweight Azure Functions API (`api/`, deployed automatically by Static Web Apps) that serves per-org configuration. No Storage Accounts or backend OAuth clients are needed.
+Complete step-by-step guide for deploying the Agent Copilot app at a new customer environment. This is a **front-end app with an Azure Functions backend-for-frontend (BFF)** — the front-end is plain ES modules (no build step), and the backend is a lightweight Azure Functions API (`api/`, deployed automatically by Static Web Apps) that serves per-org configuration **and runs the Genesys orchestration server-side** (forwarding the user's own access token). No Storage Accounts, separate Functions resource, or backend OAuth clients/secrets are needed.
 
 > **Multi-customer:** a single deployment can serve many Genesys orgs. Each org is one entry in a **server-side** registry (`api/data/customers.js`), selected at runtime via a `?org=<key>` URL parameter configured in that org's Genesys integration. The browser only ever fetches its own org's public config (via `GET /api/org-config`). See [6.2 Customer Registry](#62-customer-registry--apidatacustomersjs) and [11.6 Onboarding Additional Customer Orgs](#116-onboarding-additional-customer-orgs-multi-customer).
 
@@ -34,7 +34,7 @@ Before starting, ensure you have:
 | **Azure subscription** | With permissions to create Resource Groups and Static Web Apps |
 | **GitHub account** | Repository access and admin permissions to configure secrets |
 
-> **Note:** This app does **not** require Azure Functions, Azure Storage, or a backend OAuth client. All API calls are made directly from the browser using the user's own OAuth token.
+> **Note:** This app does **not** require a separate Azure Functions resource, Azure Storage, or a backend OAuth client/secret. The only backend is the **SWA-managed Functions API** (in `api/`, deployed automatically with the site). It is a **token-forwarding BFF**: it holds no credentials of its own and calls Genesys with the logged-in user's forwarded access token.
 
 ---
 
@@ -75,8 +75,17 @@ Before starting, ensure you have:
     │           ├── checklistConfig.js
     │           └── performance.js
     └── services/
-        ├── apiClient.js
+        ├── apiClient.js        # Low-level Genesys API wrapper (direct browser calls)
+        ├── bffClient.js        # BFF client — calls the app's own /api/* endpoints
         └── authService.js
+api/                            # Azure Functions BFF (SWA managed; server-side)
+├── host.json
+├── package.json
+├── data/customers.js          # Server-side customer registry (never shipped to browser)
+└── src/
+    ├── functions/             # org-config, copilots, queues, agents, wrapup-codes,
+    │                          #   conversations/search, conversations/enrich
+    └── shared/                # orgResolve, genesysClient, checklistEnrich
 ```
 
 ### 2.2 Branch Protection (Recommended)
@@ -190,7 +199,7 @@ Each user who will use this app must have a role that includes the following per
 | --- | --- |
 | Build Preset | **Custom** |
 | App location | `/` |
-| API location | *(leave empty)* |
+| API location | `api` |
 | Output location | *(leave empty)* |
 
 1. Click **Review + Create → Create**
@@ -217,15 +226,15 @@ You'll need this to register as an **Authorized redirect URI** in the Genesys OA
 
 ### 5.3 Verify the Workflow
 
-When you link the SWA to GitHub, Azure commits a workflow file named `azure-static-web-apps-<swa-name>.yml` to the branch and adds a matching deployment-token secret automatically. For this static app (no build step) the generated settings are:
+When you link the SWA to GitHub, Azure commits a workflow file named `azure-static-web-apps-<swa-name>.yml` to the branch and adds a matching deployment-token secret automatically. For this app (static front-end + managed Functions API, no build step) the generated settings are:
 
 ```yaml
 app_location: "/"
-api_location: ""
+api_location: "api"
 output_location: "."
 ```
 
-No build configuration is required. If an older generic `azure-static-web-apps.yml` also exists, delete it so only the Azure-generated per-environment workflow remains.
+No build configuration is required. (`api_location: "api"` is what deploys the BFF Functions alongside the site.) If an older generic `azure-static-web-apps.yml` also exists, delete it so only the Azure-generated per-environment workflow remains.
 
 ---
 
@@ -246,7 +255,6 @@ const OAUTH_SCOPES = ["openid", "profile", "email", "routing"];
 ```
 
 > The browser never receives the full registry — only its own org's public values. You normally do **not** edit `config.js` per customer — add a registry entry instead (next step).
-
 > **Important:** Each deployed app URL (its `window.location.origin`) must be registered **exactly** as an Authorized redirect URI in the relevant Genesys OAuth client (including protocol, no trailing slash). `window.location.origin` never has a trailing slash.
 
 ### 6.2 Customer Registry — `api/data/customers.js`
@@ -265,9 +273,10 @@ const CUSTOMERS = {
   // …one entry per customer
 };
 
-// Fallback org key when ?org= is absent. Set to null to hard-fail on a
-// missing ?org= once every integration URL includes it.
-const DEFAULT_ORG_KEY = "demo";
+// Hard-fail when ?org= is absent (no org is leaked). Every integration URL
+// must include ?org=<key>. Set to an existing key only to restore a temporary
+// fallback during a migration.
+const DEFAULT_ORG_KEY = null;
 
 module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
 ```
@@ -279,7 +288,6 @@ module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
 | `orgId` | The org GUID (`GET /api/v2/organizations/me` → `id`, or Admin → Organization Settings). Enables the post-login org-match check; leave `null` to skip it. |
 
 > **How the app picks a customer:** the browser reads `?org=<key>` from the URL (configured per org in that org's Genesys integration — see [Step 11.2](#112-configure-the-integration)), persists it for the OAuth round-trip, then calls `GET /api/org-config?org=<key>`. The backend returns **only** that org's `{ region, clientId, orgId }` (or `404 unknown_org`). An **unknown** `?org=` shows an "Organization not recognized" screen and never attempts login. After login, if `orgId` is set and the token's org doesn't match, the app shows "Access denied".
-
 > **Security:** the registry is server-side, so the browser **cannot enumerate the full customer list**. The one `clientId` it does receive is **public** in PKCE (not a secret) — it must reach the browser to start login. Isolation comes from login succeeding against that specific org, plus the org-match check.
 
 ### 6.3 Navigation — `js/navConfig.js`
@@ -316,11 +324,13 @@ This file contains all feature-level tunables and labels for the Agent Checklist
 | `DEFAULT_RANGE_DAYS` | `7` | Default date range shown on page load |
 | `RANGE_PRESETS` | Today, 7d, 30d | Preset period buttons shown in the toolbar |
 | `MAX_INTERVAL_DAYS` | `31` | Maximum query interval (Genesys API limit) |
-| `QUERY_PAGE_SIZE` | `100` | Max conversations per analytics query page |
-| `ENRICHMENT_BATCH` | `10` | Number of conversations enriched in parallel |
+| `QUERY_PAGE_SIZE` | `100` | Analytics query page size — now applied **server-side** in the BFF (`api/src/functions/conversationsSearch.js`) |
+| `ENRICHMENT_BATCH` | `10` | Number of conversations enriched per `/api/conversations/enrich` call |
 | `QUEUE_RESOLVE_BATCH` | `10` | Number of queue-name lookups run in parallel |
-| `MEDIA_KEYS` | 10 media types | Communication keys to extract from conversation participants (`calls`, `callbacks`, `chats`, `emails`, `messages`, `videos`, `cobrowsesessions`, `screenshares`, `socialExpressions`, `internalMessages`) |
+| `MEDIA_KEYS` | 10 media types | Communication keys extracted from conversations — now applied **server-side** in the BFF (`api/src/shared/checklistEnrich.js`): `calls`, `callbacks`, `chats`, `emails`, `messages`, `videos`, `cobrowsesessions`, `screenshares`, `socialExpressions`, `internalMessages` |
 | `TICK_STATE` | `Ticked/Unticked` | API tick state values (frozen enum) |
+
+> Since the BFF migration, analytics paging, media extraction, and the request throttle below run **server-side** in the Functions API (`api/src/shared/genesysClient.js`). The browser-side throttle below now applies only to the calls the browser still makes directly (login, identity, recordings).
 
 **API throttle & retry** (configured in `js/services/apiClient.js`):
 
@@ -388,7 +398,7 @@ Both workflow files live in both branches, but each only fires for its own branc
 
 **Promotion:** develop and test on `main` (DEV), then open a PR **`main → production`** and merge to deploy the identical code to PROD. Because `oauthRedirectUri` is derived from `window.location.origin`, no per-environment code changes are needed — just register each SWA URL in the Genesys OAuth client (Step 3.1).
 
-No backend deployment workflow is needed.
+The same SWA workflow also deploys the managed Functions API (`api_location: "api"`), so the BFF ships with the site — there is no separate backend pipeline.
 
 ---
 
@@ -592,7 +602,7 @@ No redeploy is needed beyond the registry commit; everything else is Genesys-sid
 | --- | --- | --- |
 | Azure Static Web App | Free or Standard | Free is sufficient for the app itself; Standard (~$9/app/month) adds an SLA, bring-your-own Functions, and Key Vault references — choose it for production or when a secret-backed backend is added |
 
-This app has no backend resources today, so on the **Free** tier hosting cost is effectively **zero**. A customer-facing **PROD** deployment typically uses **Standard** for the uptime SLA.
+This app has no standalone backend resources — the BFF runs on the SWA-managed Functions included with the site — so on the **Free** tier hosting cost is effectively **zero**. A customer-facing **PROD** deployment typically uses **Standard** for the uptime SLA.
 
 ---
 
@@ -641,6 +651,11 @@ This app has no backend resources today, so on the **Free** tier hosting cost is
 - **Cause**: The conversation has no AI-generated summary, or the user lacks `conversation:summary:view` permission
 - **Fix**: Summaries are only generated for conversations where Agent Copilot is active and the conversation has ended. Check the browser DevTools console for `[Summaries]` log entries — a 404 means no summary exists; a 403 means the permission is missing. Ensure the user’s role includes `conversation:summary:view` (see [Step 4](#4-user-role-permissions)).
 
+### `/api/*` calls return 401 `{ "error": "unauthorized" }` (but the token works in the browser)
+
+- **Cause**: Azure Static Web Apps **reserves the standard `Authorization` header** for its own platform auth and **overwrites it** on the `/api/*` managed-Functions hop. A BFF endpoint that reads the forwarded Genesys token from `Authorization` therefore receives a SWA platform JWT (a long `eyJ…` token) instead of the agent's opaque Genesys token, so Genesys rejects it with 401. A quick tell: the token the Function sees is a ~365-char JWT, while the real Genesys token is a ~86-char opaque string.
+- **Fix**: Forward the Genesys token in a **custom header** — this app uses **`X-Genesys-Token`**, which SWA passes through untouched (the same way `X-Org-Key` survives). `js/services/bffClient.js` sends it and `api/src/shared/orgResolve.js` reads it (falling back to `Authorization: Bearer` only for local `func start` development). **Never** switch the forwarded token back to the `Authorization` header on a SWA deployment.
+
 ### GitHub Actions deploy fails
 
 - **Cause**: SWA deployment token is missing or invalid
@@ -667,11 +682,11 @@ This app has no backend resources today, so on the **Free** tier hosting cost is
 This app is a **static SPA** (Single Page Application) with:
 
 - **No build step** — all JS/CSS is shipped directly to the browser
-- **No backend** — all Genesys Cloud API calls are made from the browser using the user's OAuth token
+- **Backend-for-Frontend (BFF)** — a SWA-managed Azure Functions API (`api/`) runs the Genesys orchestration server-side (copilot/queue/agent cascades, analytics search, checklist + summary enrichment). The browser calls the app's own `/api/*` endpoints and forwards the user's access token via the **`X-Genesys-Token`** header (SWA reserves/overwrites the standard `Authorization` header on the managed-Functions hop). Only OAuth login, identity (`/users/me`, `/organizations/me`), and recording playback still call Genesys directly from the browser.
 - **Hash-based routing** — URLs use `#/path` format for client-side navigation
 - **Chart.js v4** (loaded from CDN) — used for the completion bar chart
 - **SheetJS** (`xlsx.full.min.js`, bundled locally) — used for Excel export
 - **OAuth PKCE** — Authorization Code flow with Proof Key for Code Exchange (no client secret)
 - **Multi-customer** — a single deployment serves many Genesys orgs; the active org is resolved from a `?org=<key>` URL parameter against the **server-side** `api/data/customers.js` registry (the browser fetches only its own org's public config via `GET /api/org-config`), with a post-login org-match check and a hard-fail screen for unknown orgs
 
-The app is derived from the full Genesys Client App but contains **only** the Agent Copilot feature. It does not include Trunk Dashboards, Data Tables, Azure Functions, or notification services.
+The app is derived from the full Genesys Client App but contains **only** the Agent Copilot feature. It does not include Trunk Dashboards, Data Tables, or notification services.

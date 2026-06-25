@@ -114,6 +114,18 @@ export function createApiClient(getAccessToken) {
       return all;
     },
 
+    /**
+     * Copilot-enabled assistants only, projected to { id, name }.
+     * Mirrors the GET /api/copilots backend endpoint so the direct and
+     * backend (BFF) clients are interchangeable behind the orchestration flag.
+     */
+    getCopilots: async function () {
+      const assistants = await this.getAllAssistants();
+      return assistants
+        .filter((a) => a.copilot?.enabled === true || a.copilot?.liveOnQueue === true)
+        .map((a) => ({ id: a.id, name: a.name }));
+    },
+
     /** Fetch queue IDs assigned to an assistant (cursor-paginated). */
     getAssistantQueues: async (assistantId) => {
       const all = [];
@@ -131,6 +143,54 @@ export function createApiClient(getAccessToken) {
         after = m;
       }
       return all; // [{ id, mediaTypes, … }]
+    },
+
+    /**
+     * Queues for the selected copilots (assistants), resolved to { id, label }.
+     * Mirrors the POST /api/queues backend endpoint: fan out to each assistant's
+     * queues, de-dup, then resolve names. Direct and BFF clients are
+     * interchangeable behind the orchestration flag.
+     */
+    getQueuesForCopilots: async function (assistantIds) {
+      if (!assistantIds?.length) return [];
+      const perAssistant = await Promise.all(
+        assistantIds.map((id) => this.getAssistantQueues(id)),
+      );
+      const queueIds = new Set();
+      for (const queues of perAssistant) {
+        for (const q of queues) if (q?.id) queueIds.add(q.id);
+      }
+      const idArr = [...queueIds];
+      const names = await Promise.allSettled(idArr.map((id) => this.getQueue(id)));
+      return idArr.map((id, i) => ({
+        id,
+        label:
+          names[i].status === "fulfilled" && names[i].value?.name
+            ? names[i].value.name
+            : id,
+      }));
+    },
+
+    /**
+     * Agents (members) across the selected queues, de-duped and sorted by name.
+     * Mirrors the POST /api/agents backend endpoint.
+     */
+    getAgentsForQueues: async function (queueIds) {
+      if (!queueIds?.length) return [];
+      const perQueue = await Promise.all(
+        queueIds.map((id) => this.getQueueMembers(id)),
+      );
+      const agentMap = new Map();
+      for (const members of perQueue) {
+        for (const m of members) {
+          const userId = m.id ?? m.user?.id;
+          const userName = m.name ?? m.user?.name ?? userId;
+          if (userId) agentMap.set(userId, userName);
+        }
+      }
+      return [...agentMap.entries()]
+        .map(([id, label]) => ({ id, label }))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
     },
 
     // ── Routing ─────────────────────────────────────────────────

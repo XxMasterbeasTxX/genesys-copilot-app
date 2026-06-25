@@ -1,6 +1,6 @@
 # Agent Copilot App
 
-A front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conversation summaries, recordings, and completion analytics. A small Azure Functions API (`api/`) serves per-org configuration; the front-end is plain ES modules with no build step.
+A dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conversation summaries, recordings, and completion analytics. The front-end is plain ES modules (no build step); an Azure Functions **backend-for-frontend (BFF)** (`api/`) serves per-org configuration **and runs all Genesys orchestration server-side**, forwarding the agent's own access token. The multi-step orchestration logic and Genesys API shapes never reach the browser.
 
 ---
 
@@ -11,7 +11,8 @@ A front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checkli
 - **Completion Chart** — Bar chart showing complete vs incomplete checklist counts (Chart.js v4).
 - **Excel Export** — Two-sheet XLSX export (interactions + checklist items) via SheetJS.
 - **Cascading Filters** — Select a copilot → queues cascade → agents cascade. Status filters (All / Completed / Incomplete / Summaries) with an Agent Checked toggle.
-- **Rate-Limit Handling** — Global request throttle (5 concurrent, 210 ms gap) and automatic retry with exponential backoff on 429/5xx responses.
+- **Backend-for-Frontend (BFF)** — The browser calls the app's own `/api/*` endpoints; the server forwards the agent's Genesys token and performs the copilot/queue/agent cascades, the analytics search, and per-conversation checklist + summary enrichment. The token is forwarded in a custom **`X-Genesys-Token`** header (Azure Static Web Apps reserves and overwrites the standard `Authorization` header on the managed-Functions hop). Only login/identity and recording playback still call Genesys directly from the browser.
+- **Rate-Limit Handling** — Request throttle (5 concurrent, 210 ms gap) and automatic retry with exponential backoff on 429/5xx responses, applied both server-side (BFF) and in the browser (direct calls).
 - **Light / Dark Theme** — Automatically follows the OS / browser colour scheme.
 - **OAuth PKCE** — Authorization Code + PKCE flow with cross-tab session handoff. No client secret needed.
 - **Multi-Customer** — one deployment serves many Genesys orgs. The active org is resolved at runtime from a `?org=<key>` URL parameter against a **server-side** registry (`api/data/customers.js`); the browser only ever receives its own org's public config via `GET /api/org-config`. Includes a post-login org-match check and a hard-fail screen for unknown orgs.
@@ -22,7 +23,7 @@ A front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checkli
 | Component | Technology |
 | --------- | ---------- |
 | Front-end | Vanilla JS (ES modules), CSS custom properties |
-| Backend | Azure Functions (Node, SWA managed) — per-org config endpoint |
+| Backend | Azure Functions (Node, v4 programming model, SWA managed) — BFF: per-org config + token-forwarding orchestration |
 | Charts | [Chart.js v4](https://www.chartjs.org/) (CDN) |
 | Excel export | [SheetJS](https://sheetjs.com/) (`xlsx.full.min.js`, bundled) |
 | Auth | OAuth 2.0 Authorization Code + PKCE |
@@ -58,15 +59,27 @@ A front-end dashboard for **Genesys Cloud Agent Copilot** — view agent checkli
 │   │           ├── checklistConfig.js   # Feature tunables & labels
 │   │           └── performance.js       # Stub (disabled)
 │   └── services/
-│       ├── apiClient.js        # Genesys Cloud API wrapper
+│       ├── apiClient.js        # Low-level Genesys API wrapper (direct browser calls)
+│       ├── bffClient.js        # BFF client — calls the app's own /api/* orchestration endpoints
 │       └── authService.js      # OAuth PKCE + session management
-├── api/                        # Azure Functions API (SWA managed; server-side)
+├── api/                        # Azure Functions BFF (SWA managed; server-side)
 │   ├── host.json
 │   ├── package.json
 │   ├── data/
 │   │   └── customers.js        # Customer registry — SERVER-SIDE, never shipped to the browser
-│   └── src/functions/
-│       └── orgConfig.js        # GET /api/org-config — returns the active org's public config
+│   └── src/
+│       ├── functions/
+│       │   ├── orgConfig.js             # GET  /api/org-config            — active org's public config
+│       │   ├── copilots.js              # GET  /api/copilots              — copilot-enabled assistants
+│       │   ├── queues.js                # POST /api/queues                — copilot → queue cascade
+│       │   ├── agents.js                # POST /api/agents                — queue → agent cascade
+│       │   ├── wrapupCodes.js           # GET  /api/wrapup-codes          — wrap-up code names
+│       │   ├── conversationsSearch.js   # POST /api/conversations/search  — analytics query
+│       │   └── conversationsEnrich.js   # POST /api/conversations/enrich  — checklists + summaries
+│       └── shared/
+│           ├── orgResolve.js            # Resolve org + forwarded token from request headers
+│           ├── genesysClient.js         # Server-side Genesys client (throttle + retry + paginate)
+│           └── checklistEnrich.js       # Per-conversation checklist + summary enrichment
 ├── staticwebapp.config.json    # SPA fallback + /api routing
 ├── docs/
 │   └── setup-guide.md          # Full deployment guide
@@ -101,8 +114,9 @@ const CUSTOMERS = {
   // …one entry per customer
 };
 
-// Fallback org key when ?org= is absent. Set to null to hard-fail instead.
-const DEFAULT_ORG_KEY = "demo";
+// Hard-fail when ?org= is absent: every integration URL must include it.
+// Set to an existing key (e.g. "demo") only to restore a temporary fallback.
+const DEFAULT_ORG_KEY = null;
 
 module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
 ```
@@ -113,7 +127,7 @@ Feature-level settings (date ranges, chart colours, export columns, labels) are 
 
 ## User Permissions
 
-This app uses the logged-in user's own access token. Each user needs a Genesys Cloud role with these permissions:
+Every Genesys call is made with the **logged-in user's own access token** — whether issued directly from the browser (login, identity, recordings) or forwarded to the BFF and used server-side (copilot/queue/agent cascades, search, enrichment). The backend adds **no privileges of its own**, so the user's Genesys Cloud role still determines what data they can access. Each user needs a role with these permissions:
 
 | Permission | Purpose |
 | --- | --- |

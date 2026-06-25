@@ -223,10 +223,10 @@ The app works identically whether opened inside Genesys Cloud or in a standalone
 
 ## 8. Session & Security
 
-- **Your data stays in your browser.** All API calls go directly from your browser to Genesys Cloud. No data passes through any intermediate server.
+- **Your data stays within your own systems.** Data flows only between your browser, the app's own first-party Azure backend, and Genesys Cloud. Nothing passes through any third-party server, and nothing is stored or cached along the way.
 - **Nothing is stored permanently.** The app uses session storage (cleared when you close the tab). No cookies are used.
 - **Read-only.** The app never creates, modifies, or deletes anything in Genesys Cloud — it only reads data.
-- **Your access = your permissions.** You can only see data that your Genesys Cloud role allows. If you're missing a permission, that specific feature will show an error — everything else continues to work.
+- **Your access = your permissions.** Every request uses your own access token, so you can only see data that your Genesys Cloud role allows. The backend adds no permissions of its own. If you're missing a permission, that specific feature will show an error — everything else continues to work.
 
 ---
 
