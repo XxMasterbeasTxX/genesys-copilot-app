@@ -18,6 +18,8 @@ This document lists every external API call the app makes. All calls target the 
 
 The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser-based OAuth flow. There is no client secret.
 
+> **Multi-customer:** before login, the app resolves which Genesys org to authenticate against from the `?org=<key>` URL parameter (mapped to a `clientId` + `region` in `js/customers.js`). After login it calls `/api/v2/organizations/me` and verifies the token's org GUID matches the configured `orgId` for that key; a mismatch blocks access. An unknown `?org=` is rejected before any login attempt.
+
 ### 1.1 Authorization Redirect
 
 | Detail | Value |
@@ -62,6 +64,7 @@ All calls go to `https://api.{region}` with the header `Authorization: Bearer {a
 | Endpoint | Method | Purpose | Permission |
 | --- | --- | --- | --- |
 | `/api/v2/users/me` | GET | Fetch the logged-in user's profile (name, email, org) | *(implicit — any authenticated user)* |
+| `/api/v2/organizations/me` | GET | Verify the logged-in user's org matches the configured customer (multi-customer org-match check) | *(implicit — any authenticated user)* |
 
 ### 2.2 Assistants (Copilot)
 

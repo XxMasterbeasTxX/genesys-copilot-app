@@ -2,6 +2,8 @@
 
 Complete step-by-step guide for deploying the Agent Copilot app at a new customer environment. This is a **standalone front-end app** — no Azure Functions, Storage Accounts, or backend OAuth clients are needed.
 
+> **Multi-customer:** a single deployment can serve many Genesys orgs. Each org is one entry in the registry at `js/customers.js`, selected at runtime via a `?org=<key>` URL parameter configured in that org's Genesys integration. See [6.2 Customer Registry](#62-customer-registry--jscustomersjs) and [11.6 Onboarding Additional Customer Orgs](#116-onboarding-additional-customer-orgs-multi-customer).
+
 ---
 
 ## Table of Contents
@@ -89,7 +91,7 @@ Before starting, ensure you have:
 
 ### 3.1 OAuth Client (PKCE)
 
-This app uses a single OAuth client that authenticates users via the browser using Authorization Code + PKCE.
+This app uses Authorization Code + PKCE. Each customer org has its **own** OAuth client, created inside that org. Repeat this step once per customer org you onboard.
 
 1. Go to **Admin → Integrations → OAuth**
 2. Click **Add Client**
@@ -99,7 +101,7 @@ This app uses a single OAuth client that authenticates users via the browser usi
 | --- | --- |
 | App Name | `Agent Copilot` (or customer preference) |
 | Grant Type | **Authorization Code** |
-| Authorized redirect URI | The SWA URL (set after Step 5), e.g. `https://<swa-hostname>.azurestaticapps.net` |
+| Authorized redirect URI | Each deployed app origin — DEV **and** PROD (set after Step 5), e.g. `https://<dev-swa>.azurestaticapps.net` and `https://<prod-swa>.azurestaticapps.net` |
 
 1. Under **Scope**, enable:
    - `routing` — required for queue, skill, and wrap-up code lookups
@@ -231,39 +233,53 @@ No build configuration is required. If an older generic `azure-static-web-apps.y
 
 ### 6.1 Front-End Config — `js/config.js`
 
-Update these values for the customer:
+`js/config.js` holds only **static, customer-independent** settings (app name, OIDC scopes, router mode). All customer-specific values (region, OAuth Client ID, org GUID) live in the **customer registry** at `js/customers.js` (see [6.2](#62-customer-registry--jscustomersjs)). At load time, `config.js` resolves the active customer from the `?org=` URL parameter and derives `region`, `authHost`, `apiBase`, and `oauthClientId` automatically:
 
 ```javascript
-const REGION = "mypurecloud.de";              // ← Customer's Genesys region
+// Static settings only — no per-customer values here.
+const APP_NAME = "Agent Copilot";
+const OAUTH_SCOPES = ["openid", "profile", "email", "routing"];
 
-export const CONFIG = {
-  region: REGION,
-  authHost: `login.${REGION}`,                // Auto-derived from REGION
-  apiBase: `https://api.${REGION}`,           // Auto-derived from REGION
-  appName: "Agent Copilot",                   // ← Customise if needed
-
-  oauthClientId: "xxxxxxxx-xxxx-...",         // ← PKCE Client ID from Step 3.1
-
-  oauthRedirectUri: window.location.origin,   // Auto: the URL the app is served from
-
-  oauthScopes: ["openid", "profile", "email", "routing"],
-
-  router: { mode: "hash" }
-};
+// The active customer is resolved from js/customers.js based on ?org=.
+// region / authHost / apiBase / oauthClientId come from the matched entry;
+// oauthRedirectUri is always window.location.origin.
 ```
 
-**Values to change per customer:**
+> You normally do **not** edit `config.js` per customer — add a registry entry instead (next step).
 
-| Property | Source |
+> **Important:** Each deployed app URL (its `window.location.origin`) must be registered **exactly** as an Authorized redirect URI in the relevant Genesys OAuth client (including protocol, no trailing slash). `window.location.origin` never has a trailing slash.
+
+### 6.2 Customer Registry — `js/customers.js`
+
+Each Genesys org (customer) is one entry, keyed by a short `org` key used in the `?org=` URL parameter:
+
+```javascript
+export const CUSTOMERS = {
+  demo: {
+    name: "Demo Organization",
+    region: "mypurecloud.de",                       // customer's Genesys region (Step 3.2)
+    clientId: "b1945404-...",                        // PKCE Client ID from that org (Step 3.1)
+    orgId: "12354361-0531-4108-8a7f-d42b8828ae86",  // org GUID — enables the org-match check
+  },
+  // …one entry per customer
+};
+
+// Fallback org key when ?org= is absent. Set to null to hard-fail on a
+// missing ?org= once every integration URL includes it.
+export const DEFAULT_ORG_KEY = "demo";
+```
+
+| Field | Source |
 | --- | --- |
-| `REGION` | Customer's Genesys region (Step 3.2) |
-| `oauthClientId` | PKCE OAuth Client ID (Step 3.1) |
+| `region` | Customer's Genesys region (Step 3.2) |
+| `clientId` | PKCE OAuth Client ID created in that customer's org (Step 3.1) |
+| `orgId` | The org GUID (`GET /api/v2/organizations/me` → `id`, or Admin → Organization Settings). Enables the post-login org-match check; leave `null` to skip it. |
 
-> `oauthRedirectUri` is **not** edited — it's derived from `window.location.origin`, so the same config works on every deployed URL (DEV, PROD, customer hosts). Each deployed URL must instead be registered in the Genesys OAuth client (Step 3.1 / Step 5.2).
+> **How the app picks a customer:** it reads `?org=<key>` from the URL (configured per org in that org's Genesys integration — see [Step 11.2](#112-configure-the-integration)), persists it for the OAuth round-trip, then resolves `CUSTOMERS[key]`. An **unknown** `?org=` shows an "Organization not recognized" screen and never attempts login. After login, if `orgId` is set and the token's org doesn't match, the app shows "Access denied".
 
-> **Important:** Each deployed app URL (its `window.location.origin`) must be registered **exactly** as an Authorized redirect URI in the Genesys OAuth client (including protocol, no trailing slash). `window.location.origin` never has a trailing slash.
+> **Security:** the `clientId` is **public** in PKCE (visible in the browser), so it lives safely in this file. Isolation comes from the fact that login must succeed against that specific org, plus the optional org-match check — not from hiding the Client ID.
 
-### 6.2 Navigation — `js/navConfig.js`
+### 6.3 Navigation — `js/navConfig.js`
 
 The navigation tree is pre-configured for Agent Copilot only. Enable or disable pages by setting `enabled: true/false` on any node.
 
@@ -274,7 +290,7 @@ Currently included:
 | Agent Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
 
-### 6.3 Light / Dark Theme
+### 6.4 Light / Dark Theme
 
 The app automatically follows the browser / OS colour scheme. No configuration is needed — it works out of the box via `@media (prefers-color-scheme: light)` in `css/styles.css`.
 
@@ -377,7 +393,7 @@ No backend deployment workflow is needed.
 
 ### 9.1 Commit and Push
 
-After updating `js/config.js` with the customer's values:
+After adding the customer's registry entry in `js/customers.js` (and any `js/config.js` changes):
 
 ```bash
 git add -A
@@ -481,11 +497,15 @@ This step embeds the app inside the Genesys Cloud client so that users can acces
 
 1. Open the integration you just created
 2. Go to the **Configuration** tab
-3. On the **Application URL** field, paste your SWA URL:
+3. In the **Application URL** field, enter the app's SWA URL **with the customer's `?org=<key>` parameter** (the key matches the registry entry in `js/customers.js`):
 
 ```text
-Ex. https://happy-rock-0a1b2c3d4.2.azurestaticapps.ne
+https://<swa-hostname>.azurestaticapps.net/?org=<key>
 ```
+
+e.g. `https://brave-moss-037387410.7.azurestaticapps.net/?org=demo`
+
+> The `?org=<key>` parameter is how the app knows which customer it is serving. Use the **PROD** SWA host for the production integration and the **DEV** host for a test integration — both with the same `?org=` key.
 
 1. Set the remaining properties:
 
@@ -533,6 +553,18 @@ The app will now appear in the Genesys Cloud client for users in the assigned gr
 
 > The app detects whether it's running inside a Genesys Cloud iframe or a standalone browser tab and adapts its fullscreen behaviour accordingly.
 
+### 11.6 Onboarding Additional Customer Orgs (Multi-Customer)
+
+To add another customer to the same deployment, repeat the per-org steps:
+
+1. **Create an OAuth client** (Authorization Code + PKCE) in the customer's Genesys org (Step 3.1).
+2. **Whitelist the app origins** as Authorized redirect URIs in that client — both DEV and PROD, e.g. `https://<dev-swa>.azurestaticapps.net` and `https://<prod-swa>.azurestaticapps.net`.
+3. **Add a registry entry** in `js/customers.js` with a unique `org` key (`name`, `region`, `clientId`, `orgId`), then commit and promote to PROD.
+4. **Install a Client Application integration** in that org with Application URL `https://<swa>/?org=<key>` (Step 11.2) — one per environment (DEV + PROD).
+5. Optionally, once **every** org's integration URL includes `?org=`, set `DEFAULT_ORG_KEY = null` in `js/customers.js` to hard-fail on a missing parameter.
+
+No redeploy is needed beyond the registry commit; everything else is Genesys-side configuration.
+
 ---
 
 ## 12. Ongoing Maintenance
@@ -549,7 +581,7 @@ The app will now appear in the Genesys Cloud client for users in the assigned gr
 | --- | --- |
 | SWA Deploy Token | Get new token from Azure Portal → Static Web App → **Manage deployment token** → update the matching `AZURE_STATIC_WEB_APPS_API_TOKEN_<SWA_NAME>` secret in GitHub Secrets |
 
-> The PKCE OAuth Client ID is not a secret (no client secret exists for PKCE clients). If the OAuth client is recreated, update `oauthClientId` in `js/config.js` and push.
+> The PKCE OAuth Client ID is not a secret (no client secret exists for PKCE clients). If a customer's OAuth client is recreated, update that customer's `clientId` in `js/customers.js` and push.
 
 ### Cost Estimates
 
@@ -617,9 +649,12 @@ This app has no backend resources today, so on the **Free** tier hosting cost is
 
 | Value | Where It Goes | Example |
 | --- | --- | --- |
-| Genesys region | `js/config.js` → `REGION` | `mypurecloud.de` |
-| PKCE OAuth Client ID | `js/config.js` → `oauthClientId` | `3b89b95c-...` |
+| Org key | `js/customers.js` → `CUSTOMERS` key + Genesys integration `?org=` | `demo` |
+| Genesys region | `js/customers.js` → entry `region` | `mypurecloud.de` |
+| PKCE OAuth Client ID | `js/customers.js` → entry `clientId` | `3b89b95c-...` |
+| Org GUID | `js/customers.js` → entry `orgId` | `12354361-...` |
 | SWA URL | Genesys OAuth client → Authorized redirect URIs (one per environment) | `https://happy-rock-0a1b2c3d4.2.azurestaticapps.net` |
+| Integration Application URL | Genesys Client App integration → Application URL | `https://<swa>/?org=demo` |
 | SWA Deploy Token | GitHub Secret → `AZURE_STATIC_WEB_APPS_API_TOKEN_<SWA_NAME>` (auto-created) | *(token string)* |
 
 ---
@@ -634,5 +669,6 @@ This app is a **static SPA** (Single Page Application) with:
 - **Chart.js v4** (loaded from CDN) — used for the completion bar chart
 - **SheetJS** (`xlsx.full.min.js`, bundled locally) — used for Excel export
 - **OAuth PKCE** — Authorization Code flow with Proof Key for Code Exchange (no client secret)
+- **Multi-customer** — a single deployment serves many Genesys orgs; the active org is resolved from a `?org=<key>` URL parameter against the `js/customers.js` registry, with a post-login org-match check and a hard-fail screen for unknown orgs
 
 The app is derived from the full Genesys Client App but contains **only** the Agent Copilot feature. It does not include Trunk Dashboards, Data Tables, Azure Functions, or notification services.
