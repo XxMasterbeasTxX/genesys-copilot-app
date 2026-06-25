@@ -31,7 +31,12 @@ export function createBffClient(getAccessToken, getOrgKey) {
     const res = await fetch(`/api${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        // Forward the Genesys token in a custom header, NOT Authorization:
+        // Azure Static Web Apps reserves the standard Authorization header for
+        // its own platform auth and overwrites it on the /api proxy hop, so the
+        // managed Function never sees the real token. Custom X-* headers (like
+        // X-Org-Key) pass through untouched.
+        "X-Genesys-Token": token,
         "X-Org-Key": orgKey,
         "Content-Type": "application/json",
       },
