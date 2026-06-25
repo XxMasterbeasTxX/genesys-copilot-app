@@ -21,10 +21,8 @@ import {
   DEFAULT_RANGE_DAYS,
   RANGE_PRESETS,
   MAX_INTERVAL_DAYS,
-  QUERY_PAGE_SIZE,
   ENRICHMENT_BATCH,
   MS_PER_DAY,
-  MEDIA_KEYS,
   PURPOSE_AGENT,
   METRIC_HANDLE_TIME,
   TICK_STATE,
@@ -119,61 +117,6 @@ function extractWrapUpCodes(participant) {
 /** Resolve wrapup code IDs to display names using the cache. */
 function resolveWrapUpNames(ids, cache) {
   return ids.map((id) => cache.get(id) ?? id);
-}
-
-/**
- * Determine completion across ALL checklists: "complete" only if
- * every item in every checklist is ticked (by agent or model).
- */
-function checklistCompletion(checklists) {
-  const all = (Array.isArray(checklists) ? checklists : [checklists]).filter(Boolean);
-  const items = all.flatMap((cl) => cl.checklistItems ?? []);
-  if (!items.length) return null;
-  const allTicked = items.every(
-    (it) => it.stateFromAgent === TICK_STATE.TICKED || it.stateFromModel === TICK_STATE.TICKED,
-  );
-  return allTicked ? STATUS_FILTER.COMPLETE : STATUS_FILTER.INCOMPLETE;
-}
-
-/**
- * Parse the conversation summaries API response into a flat array.
- * The API returns { summary: {...}, sessionSummaries: [{...}] } — not { entities: [...] }.
- * `sessionSummaries` contains per-session summaries (e.g. one per transfer leg).
- * The top-level `summary` is the overall/combined summary.
- */
-function parseSummaries(res) {
-  if (!res || typeof res !== "object") return [];
-  const out = [];
-  // Per-session summaries (one per transfer leg)
-  if (Array.isArray(res.sessionSummaries)) {
-    out.push(...res.sessionSummaries);
-  }
-  // Top-level combined summary (add only if there are no session summaries,
-  // or add it as the overall summary when there are multiple sessions)
-  if (res.summary && typeof res.summary === "object" && Object.keys(res.summary).length) {
-    // Avoid duplicating if the top-level summary is identical to the only session summary
-    if (out.length !== 1) {
-      out.unshift(res.summary);
-    }
-  }
-  // Fallback: entities array (some API versions)
-  if (!out.length && Array.isArray(res.entities)) {
-    out.push(...res.entities);
-  }
-  return out;
-}
-
-/**
- * Tag each summary with `_agentName` based on its communication ID.
- * Session summaries typically have a `communication.id` that maps to an agent.
- */
-function tagSummariesWithAgent(summaries, commAgentMap) {
-  for (const s of summaries) {
-    const commId = s.communication?.id ?? s.communicationId ?? null;
-    if (commId && commAgentMap.has(commId)) {
-      s._agentName = commAgentMap.get(commId);
-    }
-  }
 }
 
 /* ── Main render ───────────────────────────────────────── */
@@ -538,72 +481,17 @@ export async function render({ route, me, api }) {
     if (enrichAbort) enrichAbort.abort();
     enrichAbort = new AbortController();
 
-    const interval = `${from.toISOString()}/${to.toISOString()}`;
-
     try {
-      if (api.searchConversations) {
-        // Backend orchestration: the analytics query shape + pagination run
-        // server-side; the browser only sends the selected filters + interval.
-        statusEl.textContent = "Loading…";
-        conversations = await api.searchConversations({
-          copilotIds: [...copilotIds],
-          queueIds: [...queueIds],
-          agentIds: [...agentIds],
-          fromIso: from.toISOString(),
-          toIso: to.toISOString(),
-        });
-      } else {
-        // Direct path: build the analytics query and auto-paginate here.
-        const copilotPredicates = [...copilotIds].map((id) => ({
-          dimension: "agentAssistantId",
-          value: id,
-        }));
-        const queuePredicates = [...queueIds].map((id) => ({
-          dimension: "queueId",
-          value: id,
-        }));
-
-        const segmentFilters = [
-          { type: "or", predicates: copilotPredicates },
-          { type: "or", predicates: queuePredicates },
-        ];
-
-        // Optional agent filter
-        if (agentIds.size) {
-          segmentFilters.push({
-            type: "or",
-            predicates: [...agentIds].map((id) => ({
-              dimension: "userId",
-              value: id,
-            })),
-          });
-        }
-
-        const body = {
-          interval,
-          order: "desc",
-          orderBy: "conversationStart",
-          segmentFilters,
-          paging: { pageSize: QUERY_PAGE_SIZE, pageNumber: 1 },
-        };
-
-        // Auto-paginate to collect ALL matching conversations
-        let page = 1;
-        for (;;) {
-          body.paging.pageNumber = page;
-          statusEl.textContent = page === 1
-            ? "Loading…"
-            : `Loading page ${page}…`;
-
-          const res = await api.queryConversationDetails(body);
-          const batch = res?.conversations ?? [];
-          conversations.push(...batch);
-
-          // Stop when we received fewer than a full page or no results
-          if (batch.length < QUERY_PAGE_SIZE) break;
-          page++;
-        }
-      }
+      // Backend orchestration: the analytics query shape + pagination run
+      // server-side; the browser only sends the selected filters + interval.
+      statusEl.textContent = "Loading…";
+      conversations = await api.searchConversations({
+        copilotIds: [...copilotIds],
+        queueIds: [...queueIds],
+        agentIds: [...agentIds],
+        fromIso: from.toISOString(),
+        toIso: to.toISOString(),
+      });
 
       if (!conversations.length) {
         statusEl.textContent =
@@ -847,25 +735,21 @@ export async function render({ route, me, api }) {
       if (signal?.aborted) return; // search was re-triggered
       const batch = conversations.slice(i, i + ENRICHMENT_BATCH);
 
-      if (api.enrichConversationBatch) {
-        // Backend orchestration: the whole batch is enriched server-side in a
-        // single call; the browser only stores the finished records.
-        try {
-          const records = await api.enrichConversationBatch(
-            batch.map((c) => c.conversationId),
-          );
-          for (const conv of batch) {
-            const rec = records?.[conv.conversationId];
-            if (rec) {
-              enriched.set(conv.conversationId, rec);
-              updateRowEnrichment(conv.conversationId);
-            }
+      // Backend orchestration: the whole batch is enriched server-side in a
+      // single call; the browser only stores the finished records.
+      try {
+        const records = await api.enrichConversationBatch(
+          batch.map((c) => c.conversationId),
+        );
+        for (const conv of batch) {
+          const rec = records?.[conv.conversationId];
+          if (rec) {
+            enriched.set(conv.conversationId, rec);
+            updateRowEnrichment(conv.conversationId);
           }
-        } catch (err) {
-          console.error("[Checklists] batch enrichment failed:", err);
         }
-      } else {
-        await Promise.allSettled(batch.map((conv) => enrichOne(conv)));
+      } catch (err) {
+        console.error("[Checklists] batch enrichment failed:", err);
       }
 
       if (signal?.aborted) return;
@@ -891,147 +775,6 @@ export async function render({ route, me, api }) {
     // Show export button once enrichment is done
     exportBtn.hidden = !withChecklist;
     updateChart();
-  }
-
-  async function enrichOne(conv) {
-    const convId = conv.conversationId;
-    try {
-      // Step 1: Get full conversation to find agent communicationId(s)
-      const fullConv = await api.getConversation(convId);
-      const agentParts = (fullConv.participants ?? []).filter(
-        (p) => p.purpose === PURPOSE_AGENT,
-      );
-
-      // Build a commId → agent name map (used to tag summaries and as a
-      // fallback) and a userId → agent name map. Each checklist carries its
-      // own `agentId`, which is the reliable way to attribute it to the
-      // correct agent across transfers.
-      const commAgentMap = new Map();
-      const userIdName = new Map();
-      for (const p of agentParts) {
-        const name = p.name ?? p.participantName
-          ?? (p.userId && userNameCache.get(p.userId))
-          ?? p.userId ?? "Unknown";
-        if (p.userId) userIdName.set(p.userId, name);
-        for (const k of MEDIA_KEYS) {
-          for (const c of p[k] ?? []) {
-            commAgentMap.set(c.id, name);
-          }
-        }
-      }
-
-      // Communications live under media-specific keys, NOT a generic key.
-      const commIds = [...commAgentMap.keys()];
-      if (!commIds.length) {
-        // Still fetch summaries even when no agent communications
-        let summaries = [];
-        try {
-          const sumRes = await api.getConversationSummaries(convId);
-          summaries = parseSummaries(sumRes);
-          tagSummariesWithAgent(summaries, commAgentMap);
-        } catch (_) { /* no summaries */ }
-        enriched.set(convId, {
-          checklists: [],
-          communicationId: null,
-          completion: null,
-          summaries,
-        });
-        updateRowEnrichment(convId);
-        return;
-      }
-
-      // Step 2: Fetch conversation summaries in parallel with checklists
-      let summaries = [];
-      try {
-        const sumRes = await api.getConversationSummaries(convId);
-        summaries = parseSummaries(sumRes);
-        tagSummariesWithAgent(summaries, commAgentMap);
-      } catch (sumErr) {
-        console.debug(`[Summaries] No summaries for ${convId}:`, sumErr.message ?? sumErr);
-      }
-
-      // Step 3: Collect checklists from ALL communications
-      let allChecklists = [];
-      let firstCommId = commIds[0] ?? null;
-
-      for (const commId of commIds) {
-        try {
-          const checklistRes = await api.getConversationChecklists(convId, commId);
-          // Normalise response – API may return { entities: [...] }, an array, or a single object
-          let list;
-          if (Array.isArray(checklistRes)) {
-            list = checklistRes;
-          } else if (Array.isArray(checklistRes?.entities)) {
-            list = checklistRes.entities;
-          } else if (checklistRes && typeof checklistRes === "object" && checklistRes.id) {
-            // Single checklist object returned
-            list = [checklistRes];
-          } else {
-            list = [];
-          }
-
-          // Tag each checklist with its OWN owning agent. The endpoint returns
-          // every checklist for the conversation (not just this communication),
-          // so attribute by the checklist's own agentId rather than the
-          // communication we happened to query. Fall back to the communication's
-          // agent only when agentId is missing/unresolvable.
-          const commAgentName = commAgentMap.get(commId) ?? "Unknown";
-          for (const cl of list) {
-            const byAgentId = cl.agentId
-              ? (userIdName.get(cl.agentId)
-                  ?? userNameCache.get(cl.agentId)
-                  ?? cl.agentId)
-              : null;
-            cl._agentName = byAgentId ?? commAgentName;
-          }
-
-          if (list.length) {
-            allChecklists.push(...list);
-          }
-        } catch (innerErr) {
-          // 404 = no checklists for this communication — expected, try next.
-          // Anything else (429, 500, network) is a real error — log visibly.
-          const is404 = innerErr.message?.includes("404");
-          if (is404) {
-            console.debug(`[Checklists] No data on comm ${commId} for ${convId}`);
-          } else {
-            console.warn(`[Checklists] Error fetching comm ${commId} for ${convId}:`, innerErr.message ?? innerErr);
-          }
-        }
-      }
-
-      // Deduplicate (safety net for overlapping comms). The same checklist
-      // INSTANCE can be returned by more than one communication query, so we
-      // must drop genuine repeats. However, `cl.id` is the checklist
-      // DEFINITION id — it is shared between different agents/legs that ran the
-      // same template (e.g. on each leg of a transfer). Deduping by id alone
-      // therefore wrongly merges Agent 1's and Agent 2's copies and keeps only
-      // the first. Key by id + owning agent + participant leg so each agent's
-      // copy survives while true duplicates still collapse. Checklists without
-      // an id are always kept.
-      const seen = new Set();
-      allChecklists = allChecklists.filter((cl) => {
-        if (!cl.id) return true;
-        const key = `${cl.id}__${cl.agentId ?? ""}__${cl.participantId ?? ""}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-
-      const completion = allChecklists.length ? checklistCompletion(allChecklists) : null;
-      enriched.set(convId, { checklists: allChecklists, communicationId: firstCommId, completion, summaries });
-      updateRowEnrichment(convId);
-    } catch (err) {
-      console.error(`[Checklists] enrichOne failed for ${convId}:`, err);
-      enriched.set(convId, {
-        checklists: [],
-        communicationId: null,
-        completion: null,
-        summaries: [],
-        _error: err.message ?? String(err),
-      });
-      updateRowEnrichment(convId);
-    }
   }
 
   // ── Export to Excel (two-sheet XLSX) ───────────────────
