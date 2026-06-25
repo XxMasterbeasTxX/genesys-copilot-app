@@ -51,10 +51,10 @@ const CUSTOMERS = {
 // ----------------------------------------------------------------------------
 // Rollout transition switch.
 // When a request to /api/org-config arrives WITHOUT an `?org=` parameter, the
-// endpoint falls back to this key so existing deployments keep working. Set
-// this to null to enforce a strict hard-fail (404) when `?org=` is missing
-// (recommended once every org's integration Application URL includes ?org=).
+// endpoint hard-fails with 404 (no org is leaked). Every org's integration
+// Application URL must therefore include `?org=<key>`. To temporarily restore a
+// fallback during a migration, set this to an existing key (e.g. "demo").
 // ----------------------------------------------------------------------------
-const DEFAULT_ORG_KEY = "demo";
+const DEFAULT_ORG_KEY = null;
 
 module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
