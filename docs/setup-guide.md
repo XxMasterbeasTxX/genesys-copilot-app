@@ -302,7 +302,7 @@ Currently included:
 | Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
 
-> **Release notes:** The sidebar footer shows the build version (auto-generated in CI) and links to an in-app Release Notes page. Edit `js/releaseNotes.js` to maintain the entries — add a new object at the **top** of the array for each notable release. The first entry is always highlighted as the latest.
+> **Release notes & versioning:** `js/releaseNotes.js` is the single source of truth for the app version. Add a new object at the **top** of the array for each release, giving it an explicit two-number `version` (e.g. `1.0`, `1.1`, `2.0`). The newest entry is exported as `APP_VERSION` and shown in the sidebar footer, and is highlighted as the latest on the Release Notes page.
 
 ### 6.4 Light / Dark Theme
 

@@ -45,7 +45,7 @@ The left sidebar contains the navigation menu. Currently, one main page is avail
 
 Click on it to open the search and analysis view.
 
-**Version & release notes:** The bottom of the sidebar shows the app version (e.g. `v1.0.42`). Click it to open the **Release Notes** page, which lists what changed in each release (newest first, with the latest highlighted). Use the **← Back** button to return to where you were.
+**Version & release notes:** The bottom of the sidebar shows the app version (e.g. `v1.2`). Click it to open the **Release Notes** page, which lists what changed in each release (newest first, with the latest highlighted). Use the **← Back** button to return to where you were.
 
 ---
 

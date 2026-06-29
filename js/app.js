@@ -12,7 +12,7 @@ import {
   scheduleTokenRefresh,
 } from "./services/authService.js";
 import { createBffClient } from "./services/bffClient.js";
-import { VERSION } from "./version.js";
+import { APP_VERSION } from "./releaseNotes.js";
 import { renderReleaseNotesPage } from "./pages/releaseNotes.js";
 
 function setHeader({ authText }) {
@@ -105,7 +105,7 @@ function renderBlockedScreen(title, message) {
   const versionEl = document.createElement("button");
   versionEl.type = "button";
   versionEl.className = "nav-version";
-  versionEl.textContent = `v${VERSION}`;
+  versionEl.textContent = `v${APP_VERSION}`;
   versionEl.title = "View release notes";
   versionEl.addEventListener("click", () => {
     window.location.hash = "#/release-notes";

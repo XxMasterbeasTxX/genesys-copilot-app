@@ -7,7 +7,6 @@
  */
 import { escapeHtml } from "../utils.js";
 import { RELEASE_NOTES } from "../releaseNotes.js";
-import { VERSION } from "../version.js";
 
 export function renderReleaseNotesPage() {
   const root = document.createElement("section");
@@ -52,15 +51,13 @@ export function renderReleaseNotesPage() {
       .map((c) => `<li>${escapeHtml(c)}</li>`)
       .join("");
 
-    // The latest entry always reflects the live build version, so it can
-    // never drift from the version shown in the sidebar footer. Older
-    // entries use their own snapshotted version, falling back to the live
-    // build if one was never recorded.
-    const versionLabel = i === 0 ? VERSION : (entry.version ?? VERSION);
+    // Each entry carries its own explicit version. The newest entry is
+    // also flagged as "Latest" and matches the sidebar footer.
+    const versionLabel = entry.version ?? null;
 
     card.innerHTML = `
       <div class="release-notes__entry-head">
-        <span class="release-notes__version">v${escapeHtml(versionLabel)}</span>
+        ${versionLabel ? `<span class="release-notes__version">v${escapeHtml(versionLabel)}</span>` : ""}
         ${i === 0 ? `<span class="release-notes__badge">Latest</span>` : ""}
         ${entry.date ? `<span class="release-notes__date">${escapeHtml(entry.date)}</span>` : ""}
       </div>
