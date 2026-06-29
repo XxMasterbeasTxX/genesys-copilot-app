@@ -72,6 +72,11 @@ function extractDuration(participant) {
   return 0;
 }
 
+/** Total handle time across all agent participants (handles transfers). */
+function extractTotalDuration(agents) {
+  return (agents ?? []).reduce((sum, a) => sum + extractDuration(a), 0);
+}
+
 /** Find the first agent participant in an analytics conversation record. */
 function findAgentParticipant(conv) {
   return (conv.participants ?? []).find((p) => p.purpose === PURPOSE_AGENT);
@@ -554,7 +559,7 @@ export async function render({ route, me, api }) {
         .filter(Boolean);
       const userName = agentNames.length ? agentNames.join(", ") : "—";
       const mediaType = agent ? extractMediaType(agent) : "—";
-      const duration = agent ? extractDuration(agent) : 0;
+      const duration = extractTotalDuration(agents);
       const wrapUpCodes = agents.flatMap((a) => resolveWrapUpNames(extractWrapUpCodes(a), wrapUpNameCache));
       const wrapUpText = wrapUpCodes.length ? [...new Set(wrapUpCodes)].join(", ") : "—";
 
@@ -803,7 +808,7 @@ export async function render({ route, me, api }) {
           .filter(Boolean);
         const userName = agentNames.join(", ");
         const mediaType = agent ? extractMediaType(agent) : "";
-        const duration = agent ? extractDuration(agent) : 0;
+        const duration = extractTotalDuration(agents);
         const wrapUpExport = agents
           .flatMap((a) => resolveWrapUpNames(extractWrapUpCodes(a), wrapUpNameCache))
           .filter((v, i, arr) => arr.indexOf(v) === i)
