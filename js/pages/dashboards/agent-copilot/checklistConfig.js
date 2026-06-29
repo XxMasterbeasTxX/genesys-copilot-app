@@ -122,6 +122,7 @@ export const EXPORT_FILENAME_PREFIX = "Agent_Checklists";
 export const EXPORT_SUMMARY_COLS = [
   { wch: 28 }, // Agent
   { wch: 24 }, // Queue
+  { wch: 24 }, // Copilot
   { wch: 24 }, // Checklist
   { wch: 14 }, // Total
   { wch: 14 }, // Complete
@@ -135,6 +136,7 @@ export const EXPORT_INTERACTION_COLS = [
   { wch: 20 }, // Time
   { wch: 24 }, // Agent
   { wch: 22 }, // Queue
+  { wch: 22 }, // Copilot
   { wch: 10 }, // Media
   { wch: 12 }, // Duration
   { wch: 24 }, // Checklist

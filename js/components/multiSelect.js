@@ -180,6 +180,11 @@ export function createMultiSelect({ placeholder = "Select…", onChange }) {
       return new Set(selected);
     },
 
+    /** Get the current item list ({ id, label }). */
+    getItems() {
+      return items.slice();
+    },
+
     /** Programmatically set the selection. */
     setSelected(ids) {
       selected = new Set(ids);
