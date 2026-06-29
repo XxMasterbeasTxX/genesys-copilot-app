@@ -6,7 +6,7 @@ A dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conve
 
 ## Features
 
-- **Agent Checklists & Summaries** — Search conversations by copilot assistant, queue, agent, and date range. Drill into checklist items with separate Agent / AI tick indicators and AI-generated conversation summaries. A single conversation can carry multiple checklists; transferred conversations show all agents and their checklists/summaries — including cases where several agents ran the *same* checklist template, each attributed to its owning agent.
+- **Checklists & Summaries** — Search conversations by copilot assistant, queue, agent, and date range. Drill into checklist items with separate Agent / AI tick indicators and AI-generated conversation summaries. A single conversation can carry multiple checklists; transferred conversations show all agents and their checklists/summaries — including cases where several agents ran the *same* checklist template, each attributed to its owning agent.
 - **Recordings** — Inline audio and screen recording playback per conversation segment.
 - **Completion Chart** — Bar chart showing complete vs incomplete checklist counts (Chart.js v4).
 - **Excel Export** — Three-sheet XLSX export (Summary + Interactions + Checklist Items) via xlsx-js-style, with styled header rows and per-column auto-filters. Interactions/Summary include a **Copilot** column.

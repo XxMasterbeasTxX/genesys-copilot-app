@@ -10,6 +10,14 @@
 export const RELEASE_NOTES = [
   {
     date: "2026-06-29",
+    title: "Clearer summaries & shorter page name",
+    changes: [
+      "Renamed the page to \"Checklists & Summaries\".",
+      "Conversation summaries no longer show a stray \"_agentName\" field — the agent appears under the \"Agent\" label.",
+    ],
+  },
+  {
+    date: "2026-06-29",
     title: "Copilot column, styled export & simpler menu",
     changes: [
       "Added a Copilot column to the results list and the Excel export (Summary + Interactions sheets).",

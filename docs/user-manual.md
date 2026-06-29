@@ -8,7 +8,7 @@ Welcome to the Agent Copilot dashboard. This app lets you review conversations t
 
 1. [Logging In](#1-logging-in)
 2. [Navigation](#2-navigation)
-3. [Agent Checklists & Summaries](#3-agent-checklists--summaries)
+3. [Checklists & Summaries](#3-checklists--summaries)
    - [Selecting Filters](#31-selecting-filters)
    - [Searching](#32-searching)
    - [Reading the Results Table](#33-reading-the-results-table)
@@ -41,7 +41,7 @@ After logging in, you'll be returned to the app. Your name and organisation will
 
 The left sidebar contains the navigation menu. Currently, one main page is available:
 
-- **Dashboards → Agent Checklists & Summaries**
+- **Dashboards → Checklists & Summaries**
 
 Click on it to open the search and analysis view.
 
@@ -49,7 +49,7 @@ Click on it to open the search and analysis view.
 
 ---
 
-## 3. Agent Checklists & Summaries
+## 3. Checklists & Summaries
 
 This is the main page. It lets you search for historical conversations that used Agent Copilot and review their checklist completion and AI summaries.
 

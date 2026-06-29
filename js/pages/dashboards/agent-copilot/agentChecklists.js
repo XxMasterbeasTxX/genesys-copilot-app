@@ -1,5 +1,5 @@
 /**
- * Dashboards › Agent Copilot › Agent Checklists & Summaries
+ * Dashboards › Agent Copilot › Checklists & Summaries
  *
  * Historical view of interactions that used Agent Copilot checklists.
  *
@@ -157,7 +157,7 @@ export async function render({ route, me, api }) {
   // Header (title + export button)
   const header = document.createElement("div");
   header.className = "checklist-header";
-  header.innerHTML = `<h2>Agent Checklists &amp; Summaries</h2>`;
+  header.innerHTML = `<h2>Checklists &amp; Summaries</h2>`;
 
   // ── Filter bar ─────────────────────────────────────────
   const filterBar = document.createElement("div");
@@ -1398,6 +1398,7 @@ export async function render({ route, me, api }) {
           "editedSummary", "editedReason", "editedResolution", "editedFollowup",
           "predictedWrapupCodes", "dateCreated", "extractedEntities",
           "communication", "participants", "selfUri", "conversation",
+          "_agentName", // shown as the "Agent" label above; don't render as a stray topic
         ]);
         for (const [key, val] of Object.entries(s)) {
           if (knownKeys.has(key)) continue;

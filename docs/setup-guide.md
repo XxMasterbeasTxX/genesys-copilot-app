@@ -299,7 +299,7 @@ Currently included:
 
 | Page | Status | Description |
 | --- | --- | --- |
-| Agent Checklists & Summaries | ✅ Enabled | Main feature page |
+| Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
 
 > **Release notes:** The sidebar footer shows the build version (auto-generated in CI) and links to an in-app Release Notes page. Edit `js/releaseNotes.js` to maintain the entries — add a new object at the **top** of the array for each notable release. The first entry is always highlighted as the latest.
@@ -450,7 +450,7 @@ Run through these checks after deployment:
 
 ### Agent Checklists
 
-- [ ] Navigate to **Dashboards → Agent Copilot → Agent Checklists & Summaries**
+- [ ] Navigate to **Dashboards → Checklists & Summaries**
 - [ ] Verify copilot assistants load in the first dropdown
 - [ ] Select a copilot → verify queues cascade into the second dropdown
 - [ ] Select a queue → verify agents cascade into the third dropdown

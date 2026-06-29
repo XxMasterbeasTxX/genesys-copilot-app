@@ -13,7 +13,7 @@ export const NAV_TREE = [
     path: "dashboards",
     enabled: true,
     children: [
-      { label: "Agent Checklists & Summaries", path: "agent-checklists", enabled: true },
+      { label: "Checklists & Summaries", path: "agent-checklists", enabled: true },
       { label: "Performance", path: "performance", enabled: false },
     ],
   },
