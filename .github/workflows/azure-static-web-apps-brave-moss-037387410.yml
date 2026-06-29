@@ -22,7 +22,8 @@ jobs:
           fetch-depth: 0
       - name: Generate version file
         run: |
-          BUILD=$(git rev-list --count HEAD)
+          git fetch origin main --no-tags
+          BUILD=$(git rev-list --count --no-merges origin/main)
           printf 'export const VERSION = "1.0.%s";\n' "$BUILD" > js/version.js
       - name: Build And Deploy
         id: builddeploy
