@@ -30,6 +30,7 @@ import {
   TABLE_DATE_FORMAT,
   CHART_CONFIG,
   EXPORT_FILENAME_PREFIX,
+  EXPORT_HEADER_STYLE,
   EXPORT_SUMMARY_COLS,
   EXPORT_INTERACTION_COLS,
   EXPORT_ITEM_COLS,
@@ -124,6 +125,16 @@ function resolveWrapUpNames(ids, cache) {
   return ids.map((id) => cache.get(id) ?? id);
 }
 
+/** Style header row, freeze it, and enable column filters on a worksheet. */
+function styleSheet(ws) {
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = EXPORT_HEADER_STYLE;
+  }
+  ws["!autofilter"] = { ref: ws["!ref"] };
+}
+
 /* ── Main render ───────────────────────────────────────── */
 
 export async function render({ route, me, api }) {
@@ -131,6 +142,7 @@ export async function render({ route, me, api }) {
   let conversations = [];         // analytics detail records
   const enriched = new Map();     // convId → { checklists, communicationId, completion }
   const queueNameCache = new Map(); // queueId → name
+  const queueCopilotCache = new Map(); // queueId → copilot name
   const userNameCache = new Map();  // userId → name
   const wrapUpNameCache = new Map(); // wrapUpCodeId → name
   let statusFilter = STATUS_FILTER.ALL;
@@ -401,7 +413,22 @@ export async function render({ route, me, api }) {
     try {
       // Copilot→queue cascade (fan-out + name resolution) is server-side when
       // backend orchestration is enabled; the direct client mirrors it 1:1.
-      const queueItems = await api.getQueuesForCopilots([...selectedIds]);
+      // Resolve per-copilot so each queue can be tagged with its copilot name.
+      const selected = [...selectedIds];
+      const labels = copilotMs.getItems?.() ?? [];
+      const nameById = new Map(labels.map((it) => [it.id, it.label ?? it.name]));
+      const perCopilot = await Promise.all(
+        selected.map((id) => api.getQueuesForCopilots([id])),
+      );
+      const seen = new Map();
+      perCopilot.forEach((queues, i) => {
+        const copilotName = nameById.get(selected[i]) ?? selected[i];
+        for (const it of queues) {
+          queueCopilotCache.set(it.id, copilotName);
+          if (!seen.has(it.id)) seen.set(it.id, it);
+        }
+      });
+      const queueItems = [...seen.values()];
 
       if (!queueItems.length) {
         queueMs.setItems([]);
@@ -533,6 +560,7 @@ export async function render({ route, me, api }) {
         <th>Time</th>
         <th>Agent</th>
         <th>Queue</th>
+        <th>Copilot</th>
         <th>Media</th>
         <th>Duration</th>
         <th>Checklist</th>
@@ -551,6 +579,7 @@ export async function render({ route, me, api }) {
       const queueName = queueId
         ? (queueNameCache.get(queueId) ?? queueId)
         : "—";
+      const copilotName = queueId ? (queueCopilotCache.get(queueId) ?? "—") : "—";
       // Show all agent names comma-separated
       const agentNames = agents
         .map((a) => a.participantName
@@ -578,6 +607,7 @@ export async function render({ route, me, api }) {
         <td>${escapeHtml(fmtDate(new Date(conv.conversationStart)))}</td>
         <td>${escapeHtml(userName)}</td>
         <td>${escapeHtml(queueName)}</td>
+        <td>${escapeHtml(copilotName)}</td>
         <td>${escapeHtml(mediaType)}</td>
         <td>${escapeHtml(fmtDuration(duration))}</td>
         <td class="checklist-cell-name">…</td>
@@ -801,6 +831,7 @@ export async function render({ route, me, api }) {
         const agent = agents[0] ?? null;
         const queueId = agent ? extractQueueId(agent) : null;
         const queueName = queueId ? (queueNameCache.get(queueId) ?? queueId) : "";
+        const copilotName = queueId ? (queueCopilotCache.get(queueId) ?? "") : "";
         const agentNames = agents
           .map((a) => a.participantName
             ?? (a.userId && userNameCache.get(a.userId))
@@ -819,6 +850,7 @@ export async function render({ route, me, api }) {
           "Time": conv.conversationStart ? new Date(conv.conversationStart) : "",
           "Agent": userName,
           "Queue": queueName,
+          "Copilot": copilotName,
           "Media": mediaType ?? "",
           "Duration (s)": duration ? Math.round(duration / 1000) : 0,
           "Checklist": info.checklists.map((c) => c.name).join(", "),
@@ -856,13 +888,14 @@ export async function render({ route, me, api }) {
       }
 
       // ── Sheet 1: Summary (pre-aggregated pivot) ──────────
-      const summaryMap = new Map(); // key → { agent, queue, checklist, total, complete, incomplete }
+      const summaryMap = new Map(); // key → { agent, queue, copilot, checklist, total, complete, incomplete }
       for (const row of interactionRows) {
-        const key = `${row.Agent}|${row.Queue}|${row.Checklist}`;
+        const key = `${row.Agent}|${row.Queue}|${row.Copilot}|${row.Checklist}`;
         if (!summaryMap.has(key)) {
           summaryMap.set(key, {
             Agent: row.Agent,
             Queue: row.Queue,
+            Copilot: row.Copilot,
             Checklist: row.Checklist,
             Total: 0,
             Complete: 0,
@@ -884,14 +917,17 @@ export async function render({ route, me, api }) {
 
       const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
       wsSummary["!cols"] = EXPORT_SUMMARY_COLS;
+      styleSheet(wsSummary);
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
       const ws1 = XLSX.utils.json_to_sheet(interactionRows);
       ws1["!cols"] = EXPORT_INTERACTION_COLS;
+      styleSheet(ws1);
       XLSX.utils.book_append_sheet(wb, ws1, "Interactions");
 
       const ws2 = XLSX.utils.json_to_sheet(itemRows);
       ws2["!cols"] = EXPORT_ITEM_COLS;
+      styleSheet(ws2);
       XLSX.utils.book_append_sheet(wb, ws2, "Checklist Items");
 
       // ── Download via URL-hash + helper page ─────────────────

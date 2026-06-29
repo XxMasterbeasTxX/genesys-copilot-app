@@ -64,7 +64,7 @@ Before starting, ensure you have:
     ├── components/
     │   └── multiSelect.js
     ├── lib/
-    │   └── xlsx.full.min.js
+    │   └── xlsx.full.min.js    # SheetJS fallback (export uses xlsx-js-style via CDN)
     ├── pages/
     │   ├── welcome.js
     │   ├── notfound.js
@@ -292,7 +292,7 @@ module.exports = { CUSTOMERS, DEFAULT_ORG_KEY };
 
 ### 6.3 Navigation — `js/navConfig.js`
 
-The navigation tree is pre-configured for Agent Copilot only. Enable or disable pages by setting `enabled: true/false` on any node.
+The navigation tree is pre-configured for Agent Copilot only. Enable or disable pages by setting `enabled: true/false` on any node. The checklist page sits directly under **Dashboards** (route `/dashboards/agent-checklists`).
 
 Currently included:
 
