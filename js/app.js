@@ -12,7 +12,7 @@ import {
   scheduleTokenRefresh,
 } from "./services/authService.js";
 import { createBffClient } from "./services/bffClient.js";
-import { VERSION, BUILD_DATE } from "./version.js";
+import { VERSION } from "./version.js";
 
 function setHeader({ authText }) {
   document.getElementById("brandTitle").textContent = CONFIG.appName;
@@ -103,7 +103,7 @@ function renderBlockedScreen(title, message) {
   // --- Version footer (bottom-left of the sidebar) ---
   const versionEl = document.createElement("div");
   versionEl.className = "nav-version";
-  versionEl.textContent = `v${VERSION} \u00B7 ${BUILD_DATE}`;
+  versionEl.textContent = `v${VERSION}`;
   navEl.append(versionEl);
 
   // --- Start router ---
