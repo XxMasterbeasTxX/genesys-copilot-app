@@ -8,7 +8,7 @@ Welcome to the Agent Copilot dashboard. This app lets you review conversations t
 
 1. [Logging In](#1-logging-in)
 2. [Navigation](#2-navigation)
-3. [Agent Checklists & Summaries](#3-agent-checklists--summaries)
+3. [Checklists & Summaries](#3-checklists--summaries)
    - [Selecting Filters](#31-selecting-filters)
    - [Searching](#32-searching)
    - [Reading the Results Table](#33-reading-the-results-table)
@@ -41,13 +41,15 @@ After logging in, you'll be returned to the app. Your name and organisation will
 
 The left sidebar contains the navigation menu. Currently, one main page is available:
 
-- **Dashboards → Agent Checklists & Summaries**
+- **Dashboards → Checklists & Summaries**
 
 Click on it to open the search and analysis view.
 
+**Version & release notes:** The bottom of the sidebar shows the app version (e.g. `v1.2`). Click it to open the **Release Notes** page, which lists what changed in each release (newest first, with the latest highlighted). Use the **← Back** button to return to where you were.
+
 ---
 
-## 3. Agent Checklists & Summaries
+## 3. Checklists & Summaries
 
 This is the main page. It lets you search for historical conversations that used Agent Copilot and review their checklist completion and AI summaries.
 
@@ -194,7 +196,6 @@ The exported file contains three sheets:
 | **Checklist Items** | One row per checklist item with conversation ID, checklist name, agent name, item name, description, agent ticked, AI ticked, and important flag |
 
 > Header rows are styled (bold, brand-blue fill) and every column has an Excel auto-filter, so you can sort and filter immediately on open.
-
 > **Pop-up blocker:** The export opens in a new tab. If your browser blocks it, allow pop-ups for the app's URL and try again.
 
 ---

@@ -58,6 +58,7 @@ Before starting, ensure you have:
     ├── config.js
     ├── nav.js
     ├── navConfig.js
+    ├── releaseNotes.js
     ├── pageRegistry.js
     ├── router.js
     ├── utils.js
@@ -298,8 +299,10 @@ Currently included:
 
 | Page | Status | Description |
 | --- | --- | --- |
-| Agent Checklists & Summaries | ✅ Enabled | Main feature page |
+| Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
+
+> **Release notes & versioning:** `js/releaseNotes.js` is the single source of truth for the app version. Add a new object at the **top** of the array for each release, giving it an explicit two-number `version` (e.g. `1.0`, `1.1`, `2.0`). The newest entry is exported as `APP_VERSION` and shown in the sidebar footer, and is highlighted as the latest on the Release Notes page.
 
 ### 6.4 Light / Dark Theme
 
@@ -447,7 +450,7 @@ Run through these checks after deployment:
 
 ### Agent Checklists
 
-- [ ] Navigate to **Dashboards → Agent Copilot → Agent Checklists & Summaries**
+- [ ] Navigate to **Dashboards → Checklists & Summaries**
 - [ ] Verify copilot assistants load in the first dropdown
 - [ ] Select a copilot → verify queues cascade into the second dropdown
 - [ ] Select a queue → verify agents cascade into the third dropdown
