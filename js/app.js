@@ -13,6 +13,7 @@ import {
 } from "./services/authService.js";
 import { createBffClient } from "./services/bffClient.js";
 import { VERSION } from "./version.js";
+import { renderReleaseNotesPage } from "./pages/releaseNotes.js";
 
 function setHeader({ authText }) {
   document.getElementById("brandTitle").textContent = CONFIG.appName;
@@ -101,9 +102,14 @@ function renderBlockedScreen(title, message) {
   const nav = createNav(navEl, NAV_TREE);
 
   // --- Version footer (bottom-left of the sidebar) ---
-  const versionEl = document.createElement("div");
+  const versionEl = document.createElement("button");
+  versionEl.type = "button";
   versionEl.className = "nav-version";
   versionEl.textContent = `v${VERSION}`;
+  versionEl.title = "View release notes";
+  versionEl.addEventListener("click", () => {
+    window.location.hash = "#/release-notes";
+  });
   navEl.append(versionEl);
 
   // --- Start router ---
@@ -113,6 +119,9 @@ function renderBlockedScreen(title, message) {
     resolve: async (route) => {
       // Root route — show welcome page with no preselection
       if (route === "/") return renderWelcomePage();
+
+      // Release notes (reached from the version footer)
+      if (route === "/release-notes") return renderReleaseNotesPage();
 
       const loader = getPageLoader(route);
       if (loader) return loader({ route, me: res.me, api });

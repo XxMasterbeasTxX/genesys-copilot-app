@@ -58,6 +58,7 @@ Before starting, ensure you have:
     ├── config.js
     ├── nav.js
     ├── navConfig.js
+    ├── releaseNotes.js
     ├── pageRegistry.js
     ├── router.js
     ├── utils.js
@@ -300,6 +301,8 @@ Currently included:
 | --- | --- | --- |
 | Agent Checklists & Summaries | ✅ Enabled | Main feature page |
 | Performance | ⛔ Disabled | Stub page — set `enabled: true` when ready |
+
+> **Release notes:** The sidebar footer shows the build version (auto-generated in CI) and links to an in-app Release Notes page. Edit `js/releaseNotes.js` to maintain the entries — add a new object at the **top** of the array for each notable release. The first entry is always highlighted as the latest.
 
 ### 6.4 Light / Dark Theme
 

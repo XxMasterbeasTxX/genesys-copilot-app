@@ -14,6 +14,7 @@ A dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conve
 - **Backend-for-Frontend (BFF)** — The browser calls the app's own `/api/*` endpoints; the server forwards the agent's Genesys token and performs the copilot/queue/agent cascades, the analytics search, and per-conversation checklist + summary enrichment. The token is forwarded in a custom **`X-Genesys-Token`** header (Azure Static Web Apps reserves and overwrites the standard `Authorization` header on the managed-Functions hop). Only login/identity and recording playback still call Genesys directly from the browser.
 - **Rate-Limit Handling** — Request throttle (5 concurrent, 210 ms gap) and automatic retry with exponential backoff on 429/5xx responses, applied both server-side (BFF) and in the browser (direct calls).
 - **Light / Dark Theme** — Automatically follows the OS / browser colour scheme.
+- **Version & Release Notes** — The sidebar footer shows an auto-incrementing build version (commit count, injected in CI). Clicking it opens an in-app Release Notes page (history-back button); entries are maintained in `js/releaseNotes.js`.
 - **OAuth PKCE** — Authorization Code + PKCE flow with cross-tab session handoff. No client secret needed.
 - **Multi-Customer** — one deployment serves many Genesys orgs. The active org is resolved at runtime from a `?org=<key>` URL parameter against a **server-side** registry (`api/data/customers.js`); the browser only ever receives its own org's public config via `GET /api/org-config`. Includes a post-login org-match check and a hard-fail screen for unknown orgs.
 - **Premium App Ready** — Can be embedded inside the Genesys Cloud client as an iframe.
@@ -42,6 +43,7 @@ A dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conve
 │   ├── orgContext.js           # Resolves the active org key from ?org=
 │   ├── nav.js                  # Sidebar renderer
 │   ├── navConfig.js            # Navigation tree definition
+│   ├── releaseNotes.js         # Release notes content (newest first)
 │   ├── pageRegistry.js         # Lazy page loader
 │   ├── router.js               # Hash-based SPA router
 │   ├── utils.js                # Shared helpers
@@ -51,6 +53,7 @@ A dashboard for **Genesys Cloud Agent Copilot** — view agent checklists, conve
 │   │   └── xlsx.full.min.js    # SheetJS fallback (export now uses xlsx-js-style via CDN)
 │   ├── pages/
 │   │   ├── welcome.js          # Landing page
+│   │   ├── releaseNotes.js     # Release Notes page (reached from the version footer)
 │   │   ├── notfound.js         # 404 page
 │   │   ├── placeholder.js      # Stub for disabled pages
 │   │   └── dashboards/
