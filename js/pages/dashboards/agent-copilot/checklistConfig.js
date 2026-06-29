@@ -118,6 +118,16 @@ export const CHART_CONFIG = Object.freeze({
 /** Filename prefix — final name: {prefix}_{YYYY-MM-DD}.xlsx */
 export const EXPORT_FILENAME_PREFIX = "Agent_Checklists";
 
+/** Header cell style for all export sheets (bold white on brand blue). */
+export const EXPORT_HEADER_STYLE = {
+  font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+  fill: { fgColor: { rgb: "1F6FEB" } },
+  alignment: { horizontal: "center", vertical: "center" },
+  border: {
+    bottom: { style: "thin", color: { rgb: "0B1B33" } },
+  },
+};
+
 /** Column widths (wch = "width in characters") for Sheet 1 (Summary). */
 export const EXPORT_SUMMARY_COLS = [
   { wch: 28 }, // Agent

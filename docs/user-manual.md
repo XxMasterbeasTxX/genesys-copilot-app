@@ -41,7 +41,7 @@ After logging in, you'll be returned to the app. Your name and organisation will
 
 The left sidebar contains the navigation menu. Currently, one main page is available:
 
-- **Dashboards → Agent Copilot → Agent Checklists & Summaries**
+- **Dashboards → Agent Checklists & Summaries**
 
 Click on it to open the search and analysis view.
 
@@ -81,6 +81,7 @@ Each row represents one interaction:
 | **Time** | When the conversation started |
 | **Agent** | The agent(s) who handled the interaction (comma-separated if transferred) |
 | **Queue** | The queue the interaction was routed through |
+| **Copilot** | The copilot assistant assigned to the queue |
 | **Media** | Communication type (voice, chat, email, etc.) |
 | **Duration** | Handle time |
 | **Checklist** | Name of the copilot checklist (shows "…" while loading, "—" if none) |
@@ -188,9 +189,11 @@ The exported file contains three sheets:
 
 | Sheet | Contents |
 | --- | --- |
-| **Summary** | Aggregated completion statistics per agent, queue, and checklist (total, complete, incomplete, completion %) |
-| **Interactions** | One row per interaction with conversation ID, time, agent, queue, media, duration, checklist name, wrap-up code, and status |
+| **Summary** | Aggregated completion statistics per agent, queue, copilot, and checklist (total, complete, incomplete, completion %) |
+| **Interactions** | One row per interaction with conversation ID, time, agent, queue, copilot, media, duration, checklist name, wrap-up code, and status |
 | **Checklist Items** | One row per checklist item with conversation ID, checklist name, agent name, item name, description, agent ticked, AI ticked, and important flag |
+
+> Header rows are styled (bold, brand-blue fill) and every column has an Excel auto-filter, so you can sort and filter immediately on open.
 
 > **Pop-up blocker:** The export opens in a new tab. If your browser blocks it, allow pop-ups for the app's URL and try again.
 

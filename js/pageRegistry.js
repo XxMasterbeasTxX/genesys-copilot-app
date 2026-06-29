@@ -6,12 +6,12 @@
  */
 
 const registry = {
-  // ── Dashboards › Agent Copilot ────────────────────────────
-  "/dashboards/agent-copilot/agent-checklists": (ctx) =>
+  // ── Dashboards ────────────────────────────────────────────
+  "/dashboards/agent-checklists": (ctx) =>
     import("./pages/dashboards/agent-copilot/agentChecklists.js").then((m) =>
       m.render(ctx),
     ),
-  "/dashboards/agent-copilot/performance": (ctx) =>
+  "/dashboards/performance": (ctx) =>
     import("./pages/dashboards/agent-copilot/performance.js").then((m) =>
       m.render(ctx),
     ),

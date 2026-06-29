@@ -30,6 +30,7 @@ import {
   TABLE_DATE_FORMAT,
   CHART_CONFIG,
   EXPORT_FILENAME_PREFIX,
+  EXPORT_HEADER_STYLE,
   EXPORT_SUMMARY_COLS,
   EXPORT_INTERACTION_COLS,
   EXPORT_ITEM_COLS,
@@ -122,6 +123,16 @@ function extractWrapUpCodes(participant) {
 /** Resolve wrapup code IDs to display names using the cache. */
 function resolveWrapUpNames(ids, cache) {
   return ids.map((id) => cache.get(id) ?? id);
+}
+
+/** Style header row, freeze it, and enable column filters on a worksheet. */
+function styleSheet(ws) {
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = EXPORT_HEADER_STYLE;
+  }
+  ws["!autofilter"] = { ref: ws["!ref"] };
 }
 
 /* ── Main render ───────────────────────────────────────── */
@@ -906,14 +917,17 @@ export async function render({ route, me, api }) {
 
       const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
       wsSummary["!cols"] = EXPORT_SUMMARY_COLS;
+      styleSheet(wsSummary);
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
       const ws1 = XLSX.utils.json_to_sheet(interactionRows);
       ws1["!cols"] = EXPORT_INTERACTION_COLS;
+      styleSheet(ws1);
       XLSX.utils.book_append_sheet(wb, ws1, "Interactions");
 
       const ws2 = XLSX.utils.json_to_sheet(itemRows);
       ws2["!cols"] = EXPORT_ITEM_COLS;
+      styleSheet(ws2);
       XLSX.utils.book_append_sheet(wb, ws2, "Checklist Items");
 
       // ── Download via URL-hash + helper page ─────────────────
