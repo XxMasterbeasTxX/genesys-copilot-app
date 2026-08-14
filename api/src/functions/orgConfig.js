@@ -1,5 +1,6 @@
 const { app } = require("@azure/functions");
 const { CUSTOMERS, DEFAULT_ORG_KEY } = require("../../data/customers");
+const { json } = require("../shared/http");
 
 // ============================================================================
 // GET /api/org-config?org=<key>
@@ -10,11 +11,17 @@ const { CUSTOMERS, DEFAULT_ORG_KEY } = require("../../data/customers");
 //
 // Anonymous by design: this must be reachable BEFORE the user logs in (the
 // browser needs region + clientId to begin OAuth). The returned values are not
-// secrets — the clientId is public in a PKCE flow.
+// secrets — the clientId is public in a PKCE flow, and the org GUID is needed
+// for the post-login org-match check.
+//
+// The customer's display `name` is deliberately NOT returned. Because this
+// endpoint is pre-auth, a 200 vs 404 already lets anyone probe whether a given
+// org key exists; there is no reason to hand out the customer's name with it.
+// Anything human-readable about the org belongs behind authentication.
 //
 // Responses:
-//   200 { key, name, region, clientId, orgId }   — resolved org
-//   404 { error: "unknown_org" }                  — missing/unknown org
+//   200 { key, region, clientId, orgId }   — resolved org
+//   404 { error: "unknown_org" }           — missing/unknown org
 // ============================================================================
 app.http("orgConfig", {
   methods: ["GET"],
@@ -27,23 +34,14 @@ app.http("orgConfig", {
 
     if (!entry) {
       context.log(`org-config: unknown org key "${requested || "(none)"}"`);
-      return {
-        status: 404,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: "unknown_org" },
-      };
+      return json(404, { error: "unknown_org" });
     }
 
-    return {
-      status: 200,
-      headers: { "Cache-Control": "no-store" },
-      jsonBody: {
-        key,
-        name: entry.name,
-        region: entry.region,
-        clientId: entry.clientId,
-        orgId: entry.orgId || null,
-      },
-    };
+    return json(200, {
+      key,
+      region: entry.region,
+      clientId: entry.clientId,
+      orgId: entry.orgId || null,
+    });
   },
 });

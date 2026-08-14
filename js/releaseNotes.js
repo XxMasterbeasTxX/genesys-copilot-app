@@ -11,6 +11,31 @@
  */
 export const RELEASE_NOTES = [
   {
+    version: "1.4",
+    date: "2026-08-14",
+    title: "Pop-out sign-in & unlimited exports",
+    changes: [
+      "Sign-in now opens a separate window instead of loading the Genesys login page inside the app. Genesys is retiring embedded login (all integrations must move by 4 February 2027).",
+      "You now click \"Sign in with Genesys\" once per session — pop-ups must be allowed for this app.",
+      "Excel exports no longer have a size limit; large exports download in full instead of being refused.",
+    ],
+  },
+  {
+    version: "1.3",
+    date: "2026-08-14",
+    title: "Export fixes, accurate results & hardening",
+    changes: [
+      "Fixed misaligned column widths in the Excel export — the Wrapup and per-item Agent columns no longer shift the columns after them.",
+      "The Excel export now matches the filters on screen instead of always exporting every interaction.",
+      "Date presets now search exactly the dates they put in the boxes, so pressing Search straight afterwards gives the same result.",
+      "Starting a new search can no longer leave checklist data from the previous search in the table.",
+      "A checklist with no items is shown as \"No items\" instead of being counted as Incomplete.",
+      "Very large searches are now labelled as partial rather than silently showing only part of the result.",
+      "An export too large to download is reported clearly instead of producing a corrupt file.",
+      "Result rows can now be opened with the keyboard.",
+    ],
+  },
+  {
     version: "1.2",
     date: "2026-06-29",
     title: "Proper release versioning",

@@ -10,6 +10,9 @@ import {
   ensureAuthenticatedWithMe,
   getValidAccessToken,
   scheduleTokenRefresh,
+  isAuthPopup,
+  runAuthPopup,
+  loginViaPopup,
 } from "./services/authService.js";
 import { createBffClient } from "./services/bffClient.js";
 import { APP_VERSION } from "./releaseNotes.js";
@@ -41,7 +44,70 @@ function renderBlockedScreen(title, message) {
   `;
 }
 
+/** Friendly explanation for each way the pop-out sign-in can fail. */
+function signInErrorMessage(code) {
+  switch (code) {
+    case "popup-blocked":
+      return "Your browser blocked the sign-in window. Allow pop-ups for this app, then click Sign in again.";
+    case "popup-closed":
+      return "The sign-in window closed before finishing. Click Sign in to try again.";
+    default:
+      return `Sign-in failed: ${code}. Click Sign in to try again.`;
+  }
+}
+
+/**
+ * Sign-in gate shown when there is no valid session.
+ *
+ * A user gesture is required: the sign-in window is opened with window.open,
+ * which browsers block unless it comes from a click. Sign-in cannot be
+ * automatic any more — the app must not navigate its own frame to the Genesys
+ * login page (see the pop-out notes in authService.js).
+ */
+function renderSignInGate() {
+  setHeader({ authText: "Auth: sign in required" });
+  const outletEl = document.getElementById("appMain");
+  outletEl.innerHTML = `
+    <section class="card">
+      <h1 class="h1">Sign in</h1>
+      <p class="p">Sign in with your Genesys Cloud account to continue.</p>
+      <button type="button" class="btn" id="signInBtn">Sign in with Genesys</button>
+      <p class="p sign-in-hint" id="signInHint"></p>
+    </section>
+  `;
+
+  const btn = document.getElementById("signInBtn");
+  const hint = document.getElementById("signInHint");
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    hint.textContent = "Opening sign-in window…";
+    try {
+      await loginViaPopup();
+      hint.textContent = "Signed in. Loading…";
+      // Reload so the normal boot path runs with the token in place: it fetches
+      // /users/me and re-runs the org-match check before the app appears.
+      window.location.reload();
+    } catch (e) {
+      btn.disabled = false;
+      hint.textContent = signInErrorMessage(e?.message || "unknown error");
+    }
+  });
+}
+
 (async function main() {
+  // --- Sign-in popup ---
+  // If this window is the pop-out login window, run the popup controller and
+  // stop before booting the app shell. It still needs the org config, because
+  // the region and clientId come from the backend registry. The org key rides
+  // on the popup URL — the popup has its own partitioned storage and cannot
+  // read the embedded app's.
+  if (isAuthPopup()) {
+    await initConfig();
+    await runAuthPopup();
+    return;
+  }
+
   setHeader({ authText: "Auth: starting…" });
 
   // --- Resolve customer config from the backend (multi-customer) ---
@@ -63,8 +129,8 @@ function renderBlockedScreen(title, message) {
   setHeader({ authText: "Auth: checking token / login…" });
   const res = await ensureAuthenticatedWithMe();
 
-  if (res.status === "redirecting") {
-    setHeader({ authText: "Auth: redirecting…" });
+  if (res.status === "needs-login") {
+    renderSignInGate();
     return;
   }
 
@@ -93,7 +159,8 @@ function renderBlockedScreen(title, message) {
       });
     },
     onSessionExpired: () => {
-      setHeader({ authText: "Auth: session expired \u2014 redirecting\u2026" });
+      // authService reloads in-frame; the boot flow then shows the sign-in gate.
+      setHeader({ authText: "Auth: session expired \u2014 sign in again\u2026" });
     },
   });
 

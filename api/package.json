@@ -4,7 +4,8 @@
   "description": "Backend API for Genesys Copilot (Azure Static Web Apps managed functions). Hosts the customer registry server-side so it is never shipped to the browser.",
   "main": "src/functions/*.js",
   "scripts": {
-    "start": "func start"
+    "start": "func start",
+    "test": "node --test"
   },
   "dependencies": {
     "@azure/functions": "^4.5.0"

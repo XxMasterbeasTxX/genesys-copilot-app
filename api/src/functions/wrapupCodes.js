@@ -1,6 +1,7 @@
 const { app } = require("@azure/functions");
 const { resolveRequestOrg } = require("../shared/orgResolve");
 const { genesysPaginatePage } = require("../shared/genesysClient");
+const { json, upstreamFailure } = require("../shared/http");
 
 // ============================================================================
 // GET /api/wrapup-codes
@@ -9,12 +10,13 @@ const { genesysPaginatePage } = require("../shared/genesysClient");
 // (auto-paginated) and returns the minimal { id, name } projection used to
 // resolve wrap-up code IDs to names in the results table and export.
 //
-// Auth: token-forwarding (Authorization: Bearer …  +  X-Org-Key).
+// Auth: token-forwarding (X-Genesys-Token + X-Org-Key).
 //
 // Responses:
 //   200 [{ id, name }]
 //   400 { error: "missing_org" | "unknown_org" }
 //   401 { error: "missing_token" | "unauthorized" }
+//   403 { error: "org_mismatch" }
 //   502 { error: "upstream_error" }
 // ============================================================================
 app.http("wrapupCodes", {
@@ -22,35 +24,20 @@ app.http("wrapupCodes", {
   authLevel: "anonymous",
   route: "wrapup-codes",
   handler: async (request, context) => {
-    const org = resolveRequestOrg(request);
-    if (!org.ok) {
-      return {
-        status: org.status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: org.error },
-      };
-    }
+    const org = await resolveRequestOrg(request, context);
+    if (!org.ok) return json(org.status, { error: org.error });
 
     try {
       const codes = await genesysPaginatePage({
-        apiBase: org.apiBase,
-        token: org.token,
+        org,
         basePath: "/api/v2/routing/wrapupcodes",
         pageSize: 500,
         context,
       });
 
-      const items = codes.map((c) => ({ id: c.id, name: c.name }));
-
-      return { status: 200, headers: { "Cache-Control": "no-store" }, jsonBody: items };
+      return json(200, codes.map((c) => ({ id: c.id, name: c.name })));
     } catch (err) {
-      context.error(`wrapup-codes: upstream error: ${err.message ?? err}`);
-      const status = err.status === 401 ? 401 : 502;
-      return {
-        status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: status === 401 ? "unauthorized" : "upstream_error" },
-      };
+      return upstreamFailure(context, "wrapup-codes", err);
     }
   },
 });

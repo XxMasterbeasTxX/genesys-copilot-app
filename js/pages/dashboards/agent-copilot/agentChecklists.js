@@ -31,9 +31,8 @@ import {
   CHART_CONFIG,
   EXPORT_FILENAME_PREFIX,
   EXPORT_HEADER_STYLE,
-  EXPORT_SUMMARY_COLS,
-  EXPORT_INTERACTION_COLS,
-  EXPORT_ITEM_COLS,
+  EXPORT_COL_WIDTHS,
+  EXPORT_DEFAULT_COL_WIDTH,
   LABELS,
 } from "./checklistConfig.js";
 
@@ -43,6 +42,61 @@ function todayUTC() {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d;
+}
+
+/** True when a rejection is just a cancelled request, not a real failure. */
+function isAborted(err) {
+  return err?.name === "AbortError";
+}
+
+/**
+ * Combine abort signals. Uses AbortSignal.any where available and falls back to
+ * manual wiring for older embedded browsers (the app runs inside the Genesys
+ * Cloud client, whose Chromium version is not ours to choose).
+ */
+function anySignal(signals) {
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(signals);
+  const ctrl = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) { ctrl.abort(s.reason); break; }
+    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
+}
+
+/** Abortable delay — rejects with an AbortError instead of firing late. */
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
+}
+
+/** `YYYY-MM-DD` for a date input, in UTC to match how the interval is built. */
+function toDateInputValue(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Turn the two date inputs into the interval that is actually queried.
+ *
+ * The search always covers whole UTC days, so the interval matches exactly what
+ * the inputs show. (Presets used to pass raw timestamps instead, which meant
+ * pressing Search straight afterwards — with the same visible dates — returned
+ * a different result set.)
+ */
+function intervalFromInputs(fromValue, toValue) {
+  return {
+    from: new Date(`${fromValue}T00:00:00.000Z`),
+    to: new Date(`${toValue}T23:59:59.999Z`),
+  };
 }
 
 function fmtDate(d) {
@@ -125,14 +179,37 @@ function resolveWrapUpNames(ids, cache) {
   return ids.map((id) => cache.get(id) ?? id);
 }
 
-/** Style header row, freeze it, and enable column filters on a worksheet. */
-function styleSheet(ws) {
-  const range = XLSX.utils.decode_range(ws["!ref"]);
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const addr = XLSX.utils.encode_cell({ r: 0, c });
-    if (ws[addr]) ws[addr].s = EXPORT_HEADER_STYLE;
+/**
+ * Build one export worksheet from an array of row objects and append it.
+ *
+ * Column widths are looked up by header name, so inserting a column can no
+ * longer shift every width after it. An empty `rows` array is handled here too:
+ * json_to_sheet produces a sheet with no `!ref`, which would otherwise blow up
+ * decode_range and take the whole export down with it.
+ */
+function appendSheet(wb, sheetName, rows) {
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  const headers = Object.keys(rows[0] ?? {});
+  if (headers.length) {
+    ws["!cols"] = headers.map((h) => ({
+      wch: EXPORT_COL_WIDTHS[h] ?? EXPORT_DEFAULT_COL_WIDTH,
+    }));
+  } else if (!ws["!ref"]) {
+    ws["!ref"] = "A1"; // an empty sheet still needs a dimension to be writable
   }
-  ws["!autofilter"] = { ref: ws["!ref"] };
+
+  const ref = headers.length ? ws["!ref"] : null;
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref);
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[addr]) ws[addr].s = EXPORT_HEADER_STYLE;
+    }
+    ws["!autofilter"] = { ref };
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
 
 /* ── Main render ───────────────────────────────────────── */
@@ -149,6 +226,17 @@ export async function render({ route, me, api }) {
   let agentCheckedFilter = false;
   let enrichAbort = null;          // AbortController for in-flight enrichment
   let expandedRowId = null;       // conversationId currently drilled-down
+  let searchTruncated = false;    // server hit its page ceiling on the last search
+
+  // Aborted when the router tears this page down; every request the page makes
+  // is tied to it so nothing outlives the view.
+  const pageAbort = new AbortController();
+
+  // Monotonic tickets for the cascades and searches. Responses can land out of
+  // order, and a slow earlier one must not overwrite newer state.
+  let copilotCascadeSeq = 0;
+  let queueCascadeSeq = 0;
+  let searchSeq = 0;
 
   // ── DOM skeleton ───────────────────────────────────────
   const root = document.createElement("div");
@@ -227,13 +315,8 @@ export async function render({ route, me, api }) {
   applyBtn.className = "btn btn-sm checklist-preset";
   applyBtn.textContent = LABELS.applyBtn;
   applyBtn.addEventListener("click", () => {
-    if (fromInput.value && toInput.value) {
-      setActivePreset(null);
-      doSearch(
-        new Date(fromInput.value + "T00:00:00Z"),
-        new Date(toInput.value + "T23:59:59Z"),
-      );
-    }
+    setActivePreset(null);
+    searchFromInputs();
   });
 
   periodWrap.append(...presetBtns, fromInput, toInput, applyBtn);
@@ -243,14 +326,7 @@ export async function render({ route, me, api }) {
   searchBtn.type = "button";
   searchBtn.className = "btn btn-sm checklist-search-btn";
   searchBtn.textContent = LABELS.searchBtn;
-  searchBtn.addEventListener("click", () => {
-    if (fromInput.value && toInput.value) {
-      doSearch(
-        new Date(fromInput.value + "T00:00:00Z"),
-        new Date(toInput.value + "T23:59:59Z"),
-      );
-    }
-  });
+  searchBtn.addEventListener("click", () => searchFromInputs());
 
   const filterRow1 = document.createElement("div");
   filterRow1.className = "checklist-filter-row";
@@ -361,12 +437,15 @@ export async function render({ route, me, api }) {
   chartWrap.append(chartCanvas);
   let chartInstance = null;
 
-  // Re-render chart when OS theme changes so colours update
+  // Re-render chart when OS theme changes so colours update.
+  // Registered with the page's abort signal: this listener lives outside the
+  // page's own subtree, so without cleanup it would survive every navigation
+  // away and keep firing against a detached canvas.
   const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
   themeMedia.addEventListener("change", () => {
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     updateChart();
-  });
+  }, { signal: pageAbort.signal });
 
   // ── Drill-down panel ───────────────────────────────────
   const drillPanel = document.createElement("div");
@@ -390,19 +469,36 @@ export async function render({ route, me, api }) {
     }
   }
 
+  // ── Search the range currently shown in the date inputs ─
+  function searchFromInputs() {
+    if (!fromInput.value || !toInput.value) {
+      statusEl.textContent = "Please choose a start and end date.";
+      return;
+    }
+    const { from, to } = intervalFromInputs(fromInput.value, toInput.value);
+    if (to <= from) {
+      statusEl.textContent = "The end date must be on or after the start date.";
+      return;
+    }
+    doSearch(from, to);
+  }
+
   // ── Load a preset range ────────────────────────────────
+  // Writes the range into the inputs, then searches THOSE values, so the query
+  // always matches the dates on screen.
   function loadRange(days) {
     const to = new Date();
     const from =
       days === 0 ? todayUTC() : new Date(to.getTime() - days * MS_PER_DAY);
-    fromInput.value = from.toISOString().slice(0, 10);
-    toInput.value = to.toISOString().slice(0, 10);
+    fromInput.value = toDateInputValue(from);
+    toInput.value = toDateInputValue(to);
     setActivePreset(days);
-    doSearch(from, to);
+    searchFromInputs();
   }
 
   // ── Copilot selection changed → cascade queues ─────────
   async function onCopilotSelectionChanged(selectedIds) {
+    const ticket = ++copilotCascadeSeq;
     queueMs.setEnabled(false);
     queueMs.setItems([]);
     agentMs.setEnabled(false);
@@ -418,8 +514,12 @@ export async function render({ route, me, api }) {
       const labels = copilotMs.getItems?.() ?? [];
       const nameById = new Map(labels.map((it) => [it.id, it.label ?? it.name]));
       const perCopilot = await Promise.all(
-        selected.map((id) => api.getQueuesForCopilots([id])),
+        selected.map((id) =>
+          api.getQueuesForCopilots([id], { signal: pageAbort.signal }),
+        ),
       );
+      if (ticket !== copilotCascadeSeq) return; // a newer selection won
+
       const seen = new Map();
       perCopilot.forEach((queues, i) => {
         const copilotName = nameById.get(selected[i]) ?? selected[i];
@@ -442,6 +542,7 @@ export async function render({ route, me, api }) {
       queueMs.setItems(queueItems);
       queueMs.setEnabled(true);
     } catch (err) {
+      if (isAborted(err) || ticket !== copilotCascadeSeq) return;
       console.error("Failed to load assistant queues:", err);
       statusEl.textContent = `Error loading queues: ${err.message}`;
     }
@@ -449,15 +550,18 @@ export async function render({ route, me, api }) {
 
   // ── Queue selection changed → cascade agents ───────────
   async function onQueueSelectionChanged(selectedQueueIds) {
+    const ticket = ++queueCascadeSeq;
     agentMs.setEnabled(false);
     agentMs.setItems([]);
 
     if (!selectedQueueIds.size) return;
 
     try {
-      // Queue→agent cascade (fan-out + de-dup) is server-side when backend
-      // orchestration is enabled; the direct client mirrors it 1:1.
-      const sorted = await api.getAgentsForQueues([...selectedQueueIds]);
+      // Queue→agent cascade (fan-out + de-dup) runs server-side.
+      const sorted = await api.getAgentsForQueues([...selectedQueueIds], {
+        signal: pageAbort.signal,
+      });
+      if (ticket !== queueCascadeSeq) return; // a newer selection won
 
       if (!sorted.length) {
         statusEl.textContent = "No agents found in the selected queue(s).";
@@ -470,6 +574,7 @@ export async function render({ route, me, api }) {
       agentMs.setItems(sorted);
       agentMs.setEnabled(true);
     } catch (err) {
+      if (isAborted(err) || ticket !== queueCascadeSeq) return;
       console.error("Failed to load queue members:", err);
       statusEl.textContent = `Error loading agents: ${err.message}`;
     }
@@ -507,23 +612,35 @@ export async function render({ route, me, api }) {
     expandedRowId = null;
     conversations = [];
     enriched.clear();
+    searchTruncated = false;
     expandResults(); // always show table when new search starts
 
-    // Cancel any in-flight enrichment from a previous search
+    // Cancel any in-flight enrichment from a previous search. The signal is
+    // passed all the way down to fetch, so the requests really do stop.
     if (enrichAbort) enrichAbort.abort();
     enrichAbort = new AbortController();
+    const signal = anySignal([enrichAbort.signal, pageAbort.signal]);
+    const ticket = ++searchSeq;
+
+    // Lock the search controls: a second search while one is running would
+    // interleave two result sets into the same state.
+    setSearchEnabled(false);
 
     try {
       // Backend orchestration: the analytics query shape + pagination run
       // server-side; the browser only sends the selected filters + interval.
-      statusEl.textContent = "Loading…";
-      conversations = await api.searchConversations({
+      const result = await api.searchConversations({
         copilotIds: [...copilotIds],
         queueIds: [...queueIds],
         agentIds: [...agentIds],
         fromIso: from.toISOString(),
         toIso: to.toISOString(),
+        signal,
       });
+      if (ticket !== searchSeq) return; // superseded while in flight
+
+      conversations = result.conversations;
+      searchTruncated = result.truncated;
 
       if (!conversations.length) {
         statusEl.textContent =
@@ -531,20 +648,43 @@ export async function render({ route, me, api }) {
         return;
       }
 
-      statusEl.textContent = `${conversations.length} interaction${conversations.length !== 1 ? "s" : ""} found — enriching checklist data…`;
+      statusEl.textContent =
+        `${conversations.length} interaction${conversations.length !== 1 ? "s" : ""} found` +
+        `${searchTruncated ? " (partial — narrow the period or filters for the full set)" : ""}` +
+        ` — enriching checklist data…`;
 
       // Pre-load wrapup code names (best-effort; falls back to ID on failure)
       try {
-        const codes = await api.getAllWrapupCodes();
+        const codes = await api.getAllWrapupCodes({ signal });
         for (const c of codes) wrapUpNameCache.set(c.id, c.name);
-      } catch (_) { /* non-fatal */ }
+      } catch (err) {
+        if (isAborted(err)) return;
+        /* non-fatal — the table falls back to raw wrap-up code IDs */
+      }
 
       renderTable();
-      enrichConversations(enrichAbort.signal);
+
+      // Enrichment continues in the background so the table is usable straight
+      // away; a new search aborts it via `signal`.
+      enrichConversations(signal).catch((err) => {
+        if (!isAborted(err)) console.error("[Checklists] enrichment failed:", err);
+      });
     } catch (err) {
+      if (isAborted(err)) return;
       console.error("Analytics query failed:", err);
       statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      // Only the newest search may unlock the controls — an older one finishing
+      // late must not re-enable them mid-flight.
+      if (ticket === searchSeq) setSearchEnabled(true);
     }
+  }
+
+  /** Enable/disable everything that can start a new search. */
+  function setSearchEnabled(on) {
+    searchBtn.disabled = !on;
+    applyBtn.disabled = !on;
+    for (const btn of presetBtns) btn.disabled = !on;
   }
 
   // ── Render interaction table ───────────────────────────
@@ -602,6 +742,11 @@ export async function render({ route, me, api }) {
       const tr = document.createElement("tr");
       tr.className = "checklist-row";
       tr.dataset.convId = conv.conversationId;
+      // The row is the control that opens the drill-down, so it has to be
+      // reachable and operable without a mouse.
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.setAttribute("aria-label", `Interaction details for ${userName}`);
 
       tr.innerHTML = `
         <td>${escapeHtml(fmtDate(new Date(conv.conversationStart)))}</td>
@@ -618,6 +763,12 @@ export async function render({ route, me, api }) {
       `;
 
       tr.addEventListener("click", () => onRowClick(conv.conversationId));
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault(); // Space would otherwise scroll the page
+          onRowClick(conv.conversationId);
+        }
+      });
       tbody.append(tr);
     }
 
@@ -625,28 +776,39 @@ export async function render({ route, me, api }) {
     tableWrap.append(table);
   }
 
+  /**
+   * The single definition of "is this interaction currently in scope".
+   *
+   * Used both to show/hide table rows and to pick the rows for the Excel
+   * export, so the download can never disagree with what is on screen.
+   *
+   * @param {object|undefined} info enrichment record, if it has arrived yet
+   */
+  function passesFilters(info) {
+    // Step 1: status filter (mutually exclusive)
+    if (statusFilter === STATUS_FILTER.SUMMARIES) {
+      if (!info?.summaries?.length) return false;
+    } else if (statusFilter !== STATUS_FILTER.ALL) {
+      // COMPLETE / INCOMPLETE — `completion: null` matches neither.
+      if (info?.completion !== statusFilter) return false;
+    }
+
+    // Step 2: agent-checked filter (AND on top of status)
+    if (agentCheckedFilter) {
+      const agentTicked = info?.checklists?.some((cl) =>
+        cl.checklistItems?.some((item) => item.stateFromAgent === TICK_STATE.TICKED),
+      );
+      if (!agentTicked) return false;
+    }
+
+    return true;
+  }
+
   // ── Apply status filter visibility ─────────────────────
   function applyTableFilter() {
     const rows = tableWrap.querySelectorAll(".checklist-row");
     for (const row of rows) {
-      const info = enriched.get(row.dataset.convId);
-
-      // Step 1: status filter (mutually exclusive)
-      if (statusFilter === STATUS_FILTER.ALL) {
-        row.hidden = false;
-      } else if (statusFilter === STATUS_FILTER.SUMMARIES) {
-        row.hidden = !info ? true : !info.summaries?.length;
-      } else {
-        // COMPLETE / INCOMPLETE
-        row.hidden = !info ? true : info.completion !== statusFilter;
-      }
-
-      // Step 2: agent-checked filter (AND on top of status)
-      if (agentCheckedFilter && !row.hidden) {
-        row.hidden = !info?.checklists?.some(
-          (cl) => cl.checklistItems?.some((item) => item.stateFromAgent === TICK_STATE.TICKED),
-        );
-      }
+      row.hidden = !passesFilters(enriched.get(row.dataset.convId));
     }
     updateChart();
   }
@@ -661,8 +823,9 @@ export async function render({ route, me, api }) {
       if (row.hidden) continue;
       const info = enriched.get(row.dataset.convId);
       if (!info?.checklists?.length) continue;
+      // Undetermined records (completion === null) belong in neither bar.
       if (info.completion === STATUS_FILTER.COMPLETE) complete++;
-      else incomplete++;
+      else if (info.completion === STATUS_FILTER.INCOMPLETE) incomplete++;
     }
 
     const hasData = complete + incomplete > 0;
@@ -755,27 +918,42 @@ export async function render({ route, me, api }) {
 
     nameCell.textContent = info.checklists.map((c) => c.name).join(", ");
 
+    // completion is null when the checklists carry no items at all: that is
+    // undetermined, not a failure, so it gets its own neutral badge.
     if (info.completion === STATUS_FILTER.COMPLETE) {
       statusCell.innerHTML =
         `<span class="checklist-badge checklist-badge--complete">${LABELS.badgeComplete}</span>`;
-    } else {
+    } else if (info.completion === STATUS_FILTER.INCOMPLETE) {
       statusCell.innerHTML =
         `<span class="checklist-badge checklist-badge--incomplete">${LABELS.badgeIncomplete}</span>`;
+    } else {
+      statusCell.innerHTML =
+        `<span class="checklist-badge checklist-badge--none">${LABELS.badgeNoItems}</span>`;
     }
   }
 
   // ── Background enrichment ──────────────────────────────
   async function enrichConversations(signal) {
-    for (let i = 0; i < conversations.length; i += ENRICHMENT_BATCH) {
-      if (signal?.aborted) return; // search was re-triggered
-      const batch = conversations.slice(i, i + ENRICHMENT_BATCH);
+    const batchConversations = conversations;
+
+    for (let i = 0; i < batchConversations.length; i += ENRICHMENT_BATCH) {
+      if (signal.aborted) return; // search was re-triggered
+      const batch = batchConversations.slice(i, i + ENRICHMENT_BATCH);
 
       // Backend orchestration: the whole batch is enriched server-side in a
       // single call; the browser only stores the finished records.
       try {
         const records = await api.enrichConversationBatch(
           batch.map((c) => c.conversationId),
+          { signal },
         );
+
+        // Check BEFORE writing, not after. doSearch() clears `enriched` and
+        // aborts; a batch that was already in flight would otherwise land in
+        // the new search's state and show stale checklists for any
+        // conversation the two searches have in common.
+        if (signal.aborted) return;
+
         for (const conv of batch) {
           const rec = records?.[conv.conversationId];
           if (rec) {
@@ -784,15 +962,18 @@ export async function render({ route, me, api }) {
           }
         }
       } catch (err) {
+        if (isAborted(err)) return;
         console.error("[Checklists] batch enrichment failed:", err);
       }
 
-      if (signal?.aborted) return;
+      if (signal.aborted) return;
       applyTableFilter();
     }
 
+    if (signal.aborted) return;
+
     // Final status update
-    const total = conversations.length;
+    const total = batchConversations.length;
     const withChecklist = [...enriched.values()].filter(
       (e) => e.checklists?.length,
     ).length;
@@ -805,6 +986,10 @@ export async function render({ route, me, api }) {
     if (withError) {
       statusText += ` — ${withError} failed (hover badge for details)`;
     }
+    if (searchTruncated) {
+      statusText +=
+        " — partial result set (the period matched more interactions than can be returned at once)";
+    }
     statusEl.textContent = statusText;
 
     // Show export button once enrichment is done
@@ -812,7 +997,7 @@ export async function render({ route, me, api }) {
     updateChart();
   }
 
-  // ── Export to Excel (two-sheet XLSX) ───────────────────
+  // ── Export to Excel (three-sheet XLSX) ─────────────────
   function exportToExcel() {
     try {
       if (typeof XLSX === "undefined") {
@@ -820,12 +1005,18 @@ export async function render({ route, me, api }) {
         return;
       }
 
-      // ── Sheet 1: Interactions ────────────────────────────
+      // Only the interactions currently in scope — the export must match the
+      // table and chart, not silently include rows the filters hid.
+      const exportable = conversations.filter((conv) => {
+        const info = enriched.get(conv.conversationId);
+        return info?.checklists?.length && passesFilters(info);
+      });
+
+      // ── Sheet 2: Interactions ────────────────────────────
       const interactionRows = [];
-      for (const conv of conversations) {
+      for (const conv of exportable) {
         const convId = conv.conversationId;
         const info = enriched.get(convId);
-        if (!info?.checklists?.length) continue;
 
         const agents = findAllAgentParticipants(conv);
         const agent = agents[0] ?? null;
@@ -855,21 +1046,20 @@ export async function render({ route, me, api }) {
           "Duration (s)": duration ? Math.round(duration / 1000) : 0,
           "Checklist": info.checklists.map((c) => c.name).join(", "),
           "Wrapup": wrapUpExport,
-          "Status": info.completion === STATUS_FILTER.COMPLETE ? "Complete" : "Incomplete",
+          "Status": exportStatus(info.completion),
         });
       }
 
       if (!interactionRows.length) {
-        statusEl.textContent = "⚠ No checklist data to export.";
+        statusEl.textContent = "⚠ No checklist data to export for the current filters.";
         return;
       }
 
-      // ── Sheet 2: Checklist Items ─────────────────────────
+      // ── Sheet 3: Checklist Items ─────────────────────────
       const itemRows = [];
-      for (const conv of conversations) {
+      for (const conv of exportable) {
         const convId = conv.conversationId;
         const info = enriched.get(convId);
-        if (!info?.checklists?.length) continue;
 
         for (const cl of info.checklists) {
           for (const item of cl.checklistItems ?? []) {
@@ -905,52 +1095,62 @@ export async function render({ route, me, api }) {
         const s = summaryMap.get(key);
         s.Total++;
         if (row.Status === "Complete") s.Complete++;
-        else s.Incomplete++;
+        else if (row.Status === "Incomplete") s.Incomplete++;
       }
       const summaryRows = [...summaryMap.values()].map((s) => ({
         ...s,
-        "Completion %": s.Total ? Math.round((s.Complete / s.Total) * 100) + "%" : "0%",
+        // Percentage of the interactions that could be judged, so checklists
+        // with no items don't drag the figure down.
+        "Completion %": s.Complete + s.Incomplete
+          ? Math.round((s.Complete / (s.Complete + s.Incomplete)) * 100) + "%"
+          : "—",
       }));
 
       // ── Build workbook ───────────────────────────────────
       const wb = XLSX.utils.book_new();
+      appendSheet(wb, "Summary", summaryRows);
+      appendSheet(wb, "Interactions", interactionRows);
+      appendSheet(wb, "Checklist Items", itemRows);
 
-      const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
-      wsSummary["!cols"] = EXPORT_SUMMARY_COLS;
-      styleSheet(wsSummary);
-      XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
-
-      const ws1 = XLSX.utils.json_to_sheet(interactionRows);
-      ws1["!cols"] = EXPORT_INTERACTION_COLS;
-      styleSheet(ws1);
-      XLSX.utils.book_append_sheet(wb, ws1, "Interactions");
-
-      const ws2 = XLSX.utils.json_to_sheet(itemRows);
-      ws2["!cols"] = EXPORT_ITEM_COLS;
-      styleSheet(ws2);
-      XLSX.utils.book_append_sheet(wb, ws2, "Checklist Items");
-
-      // ── Download via URL-hash + helper page ─────────────────
-      // The app runs inside a cross-origin Genesys Cloud iframe where
-      // downloads, showSaveFilePicker, postMessage, and localStorage
-      // are all blocked or partitioned. Solution: encode the file as
-      // base64 in the URL hash of download.html. The hash fragment
-      // never leaves the browser and Chrome supports ~2 MB URLs.
+      // ── Hand the workbook to the helper page ────────────────
+      // The app runs inside a cross-origin Genesys Cloud iframe where direct
+      // downloads and showSaveFilePicker are blocked. The workbook is stashed
+      // on `window` under a random key and download.html reads it back through
+      // `window.opener` (both windows are same-origin).
+      //
+      // The data deliberately does NOT go in the URL: browsers cap URL length
+      // at roughly 2 MB, which silently truncated large exports into corrupt
+      // files. Through the opener there is no size ceiling.
       const today = new Date().toISOString().slice(0, 10);
       const fileName = `${EXPORT_FILENAME_PREFIX}_${today}.xlsx`;
       const b64 = XLSX.write(wb, { bookType: "xlsx", type: "base64" });
 
+      const key = `xlsx_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      window._xlsxDownload = window._xlsxDownload || {};
+      window._xlsxDownload[key] = { filename: fileName, b64 };
+
       const helperUrl = new URL("download.html", document.baseURI);
-      helperUrl.hash = encodeURIComponent(fileName) + "|" + b64;
+      helperUrl.hash = key;
 
       const popup = window.open(helperUrl.href, "_blank");
       if (!popup) {
+        delete window._xlsxDownload[key]; // don't leak the workbook
         statusEl.textContent = "⚠ Pop-up blocked. Please allow pop-ups for this site and try again.";
         return;
       }
+      statusEl.textContent =
+        `⬇ Exported ${interactionRows.length} interaction${interactionRows.length !== 1 ? "s" : ""}` +
+        ` — ${LABELS.exportFiltered}`;
     } catch (err) {
       statusEl.textContent = `⚠ Export failed: ${err.message}`;
     }
+  }
+
+  /** Excel-facing wording for a completion value (null = nothing to judge). */
+  function exportStatus(completion) {
+    if (completion === STATUS_FILTER.COMPLETE) return "Complete";
+    if (completion === STATUS_FILTER.INCOMPLETE) return "Incomplete";
+    return "No items";
   }
 
   // ── Row click → drill-down ─────────────────────────────
@@ -1080,8 +1280,9 @@ export async function render({ route, me, api }) {
     const fetchStubs = async () => {
       let stubs;
       try {
-        stubs = await api.getConversationRecordings(convId);
+        stubs = await api.getConversationRecordings(convId, { signal: pageAbort.signal });
       } catch (e) {
+        if (isAborted(e)) throw e;
         // 404 means the conversation has no recordings — treat as empty
         if (/\b404\b/.test(e.message)) return [];
         throw e;
@@ -1105,7 +1306,7 @@ export async function render({ route, me, api }) {
         let available = await fetchStubs();
         for (let stubRetry = 0; !available.length && stubRetry < 2; stubRetry++) {
           loadBtn.textContent = "⏳ Retrying…";
-          await new Promise((r) => setTimeout(r, 3000));
+          await sleep(3000, pageAbort.signal);
           available = await fetchStubs();
         }
 
@@ -1175,7 +1376,9 @@ export async function render({ route, me, api }) {
                 let uri = null;
                 let rec = null;
                 for (let attempt = 0; attempt < MAX_TRANSCODE_ATTEMPTS; attempt++) {
-                  rec = await api.getConversationRecording(convId, stub.id, formatId);
+                  rec = await api.getConversationRecording(convId, stub.id, formatId, {
+                    signal: pageAbort.signal,
+                  });
                   uri = rec?.mediaUris?.[formatId]?.mediaUri
                     ?? rec?.mediaUris?.MP3?.mediaUri
                     ?? rec?.mediaUris?.WEBM?.mediaUri
@@ -1185,7 +1388,7 @@ export async function render({ route, me, api }) {
                     ?? null;
                   if (uri) break;
                   if (attempt < MAX_TRANSCODE_ATTEMPTS - 1) {
-                    await new Promise((r) => setTimeout(r, TRANSCODE_RETRY_DELAY));
+                    await sleep(TRANSCODE_RETRY_DELAY, pageAbort.signal);
                   }
                 }
 
@@ -1202,6 +1405,7 @@ export async function render({ route, me, api }) {
               }
               playerSlot.dataset.loaded = "1";
             } catch (recErr) {
+              if (isAborted(recErr)) return; // page was torn down
               playerSlot.innerHTML =
                 `<span class="checklist-drilldown__recording-msg checklist-drilldown__recording-msg--error">` +
                 `Could not load: ${escapeHtml(recErr.message ?? "Unknown error")}</span>`;
@@ -1216,6 +1420,7 @@ export async function render({ route, me, api }) {
 
         recSection.append(btnRow, playerArea);
       } catch (err) {
+        if (isAborted(err)) return; // page was torn down
         recSection.innerHTML = "";
         loadBtn.dataset.loaded = "1";
         const msg = document.createElement("span");
@@ -1455,11 +1660,24 @@ export async function render({ route, me, api }) {
     }
   }
 
+  // ── Teardown ───────────────────────────────────────────
+  // Called by the router before this page is swapped out. Without it the theme
+  // listener, the Chart.js instance and any in-flight request would outlive the
+  // view (see the PAGE TEARDOWN note in router.js).
+  root.dispose = () => {
+    pageAbort.abort();
+    enrichAbort?.abort();
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+    }
+  };
+
   // ── Bootstrap ──────────────────────────────────────────
   statusEl.textContent = "Loading copilot assistants…";
 
   try {
-    const copilotsEnabled = await api.getCopilots();
+    const copilotsEnabled = await api.getCopilots({ signal: pageAbort.signal });
 
     if (!copilotsEnabled.length) {
       statusEl.textContent =
@@ -1480,10 +1698,11 @@ export async function render({ route, me, api }) {
       DEFAULT_RANGE_DAYS === 0
         ? todayUTC()
         : new Date(to.getTime() - DEFAULT_RANGE_DAYS * MS_PER_DAY);
-    fromInput.value = from.toISOString().slice(0, 10);
-    toInput.value = to.toISOString().slice(0, 10);
+    fromInput.value = toDateInputValue(from);
+    toInput.value = toDateInputValue(to);
     setActivePreset(DEFAULT_RANGE_DAYS);
   } catch (err) {
+    if (isAborted(err)) return root;
     console.error("Failed to load assistants:", err);
     statusEl.textContent = `Error loading assistants: ${err.message}`;
   }

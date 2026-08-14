@@ -33,11 +33,17 @@ export function createMultiSelect({ placeholder = "Select…", onChange }) {
   trigger.type = "button";
   trigger.className = "ms-dropdown__trigger";
   trigger.textContent = placeholder;
+  // Announce this as a collapsed popup owner so screen readers describe the
+  // state, not just "button, Select copilot(s)…".
+  trigger.setAttribute("aria-haspopup", "true");
+  trigger.setAttribute("aria-expanded", "false");
 
   // ── Dropdown panel ─────────────────────────────────────
   const panel = document.createElement("div");
   panel.className = "ms-dropdown__panel";
   panel.hidden = true;
+  panel.setAttribute("role", "group");
+  if (placeholder) panel.setAttribute("aria-label", placeholder);
 
   // "Select All" row
   const allRow = document.createElement("label");
@@ -66,9 +72,19 @@ export function createMultiSelect({ placeholder = "Select…", onChange }) {
     isOpen ? close() : open();
   });
 
+  // Escape closes the panel and returns focus to the trigger.
+  wrapper.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isOpen) {
+      e.stopPropagation();
+      close();
+      trigger.focus();
+    }
+  });
+
   function open() {
     isOpen = true;
     panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
     wrapper.classList.add("ms-dropdown--open");
     // Close on outside click
     requestAnimationFrame(() =>
@@ -79,6 +95,7 @@ export function createMultiSelect({ placeholder = "Select…", onChange }) {
   function close() {
     isOpen = false;
     panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
     wrapper.classList.remove("ms-dropdown--open");
   }
 
@@ -162,16 +179,6 @@ export function createMultiSelect({ placeholder = "Select…", onChange }) {
     setItems(newItems) {
       items = newItems.slice().sort((a, b) => a.label.localeCompare(b.label));
       selected.clear();
-      renderList();
-    },
-
-    /** Replace items but keep current selection where IDs still exist. */
-    setItemsKeepSelection(newItems) {
-      items = newItems.slice().sort((a, b) => a.label.localeCompare(b.label));
-      const validIds = new Set(items.map((i) => i.id));
-      for (const id of selected) {
-        if (!validIds.has(id)) selected.delete(id);
-      }
       renderList();
     },
 

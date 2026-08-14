@@ -34,12 +34,6 @@ export function getLeafRoutes(nodes = NAV_TREE, parentPath = "") {
   return routes;
 }
 
-/** Return the first leaf route (used as the default landing page). */
-export function getDefaultRoute() {
-  const leaves = getLeafRoutes();
-  return leaves[0] || "/";
-}
-
 /** If `prefix` matches a folder, return its first descendent leaf route. */
 export function getFirstLeafUnder(prefix) {
   return getLeafRoutes().find((r) => r.startsWith(prefix + "/")) || null;

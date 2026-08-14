@@ -1,6 +1,7 @@
 const { app } = require("@azure/functions");
 const { resolveRequestOrg } = require("../shared/orgResolve");
 const { genesysRequest } = require("../shared/genesysClient");
+const { json, readJson, readIdList, upstreamFailure } = require("../shared/http");
 
 // ============================================================================
 // POST /api/conversations/search
@@ -12,60 +13,81 @@ const { genesysRequest } = require("../shared/genesysClient");
 // collect every matching conversation, and returns the raw analytics records
 // the results table consumes. The query shape + pagination stay server-side.
 //
-// Auth: token-forwarding (Authorization: Bearer …  +  X-Org-Key).
+// All limits are enforced HERE, not just in the browser: the interval length,
+// the filter list sizes, and the page ceiling. The client checks exist for fast
+// feedback, but they are trivially bypassable.
+//
+// Auth: token-forwarding (X-Genesys-Token + X-Org-Key).
 //
 // Responses:
-//   200 { conversations: [...] }
-//   400 { error: "missing_params" | "missing_org" | "unknown_org" }
+//   200 { conversations: [...], truncated: boolean }
+//   400 { error: "missing_params" | "invalid_interval" | "interval_too_long"
+//                | "too_many_*" | "missing_org" | "unknown_org" }
 //   401 { error: "missing_token" | "unauthorized" }
+//   403 { error: "org_mismatch" }
 //   502 { error: "upstream_error" }
 // ============================================================================
 
 /** Max conversations per analytics page. */
 const QUERY_PAGE_SIZE = 100;
+/** Page ceiling — caps both the response size and the time spent upstream. */
+const MAX_PAGES = 50;
+/** Maximum interval the Genesys analytics API allows (days). */
+const MAX_INTERVAL_DAYS = 31;
+const MS_PER_DAY = 86_400_000;
+
+const MAX_COPILOT_IDS = 50;
+const MAX_QUEUE_IDS = 100;
+const MAX_AGENT_IDS = 500;
 
 app.http("conversationsSearch", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "conversations/search",
   handler: async (request, context) => {
-    const org = resolveRequestOrg(request);
-    if (!org.ok) {
-      return {
-        status: org.status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: org.error },
-      };
+    const org = await resolveRequestOrg(request, context);
+    if (!org.ok) return json(org.status, { error: org.error });
+
+    const body = await readJson(request);
+
+    const copilots = readIdList(body.copilotIds, {
+      max: MAX_COPILOT_IDS, field: "copilotIds",
+    });
+    if (!copilots.ok) return copilots.response;
+
+    const queues = readIdList(body.queueIds, { max: MAX_QUEUE_IDS, field: "queueIds" });
+    if (!queues.ok) return queues.response;
+
+    const agents = readIdList(body.agentIds ?? [], {
+      max: MAX_AGENT_IDS, field: "agentIds",
+    });
+    if (!agents.ok) return agents.response;
+
+    const fromIso = typeof body.fromIso === "string" ? body.fromIso : null;
+    const toIso = typeof body.toIso === "string" ? body.toIso : null;
+
+    if (!copilots.ids.length || !queues.ids.length || !fromIso || !toIso) {
+      return json(400, { error: "missing_params" });
     }
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
+    // --- Interval validation (mirrors the client-side guard) ---
+    const fromMs = Date.parse(fromIso);
+    const toMs = Date.parse(toIso);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+      return json(400, { error: "invalid_interval" });
     }
-    const copilotIds = Array.isArray(body?.copilotIds) ? body.copilotIds : null;
-    const queueIds = Array.isArray(body?.queueIds) ? body.queueIds : null;
-    const agentIds = Array.isArray(body?.agentIds) ? body.agentIds : [];
-    const fromIso = typeof body?.fromIso === "string" ? body.fromIso : null;
-    const toIso = typeof body?.toIso === "string" ? body.toIso : null;
-
-    if (!copilotIds?.length || !queueIds?.length || !fromIso || !toIso) {
-      return {
-        status: 400,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: "missing_params" },
-      };
+    if ((toMs - fromMs) / MS_PER_DAY > MAX_INTERVAL_DAYS) {
+      return json(400, { error: "interval_too_long", maxDays: MAX_INTERVAL_DAYS });
     }
 
     const segmentFilters = [
-      { type: "or", predicates: copilotIds.map((id) => ({ dimension: "agentAssistantId", value: id })) },
-      { type: "or", predicates: queueIds.map((id) => ({ dimension: "queueId", value: id })) },
+      { type: "or", predicates: copilots.ids.map((id) => ({ dimension: "agentAssistantId", value: id })) },
+      { type: "or", predicates: queues.ids.map((id) => ({ dimension: "queueId", value: id })) },
     ];
-    if (agentIds.length) {
+    if (agents.ids.length) {
       segmentFilters.push({
         type: "or",
-        predicates: agentIds.map((id) => ({ dimension: "userId", value: id })),
+        predicates: agents.ids.map((id) => ({ dimension: "userId", value: id })),
       });
     }
 
@@ -79,12 +101,12 @@ app.http("conversationsSearch", {
 
     try {
       const conversations = [];
-      let page = 1;
-      for (;;) {
+      let truncated = false;
+
+      for (let page = 1; ; page++) {
         queryBody.paging.pageNumber = page;
         const res = await genesysRequest({
-          apiBase: org.apiBase,
-          token: org.token,
+          org,
           path: "/api/v2/analytics/conversations/details/query",
           method: "POST",
           body: queryBody,
@@ -92,23 +114,22 @@ app.http("conversationsSearch", {
         });
         const batch = res?.conversations ?? [];
         conversations.push(...batch);
+
         if (batch.length < QUERY_PAGE_SIZE) break;
-        page++;
+        if (page >= MAX_PAGES) {
+          // Tell the browser the result set was cut short so it can say so,
+          // rather than silently presenting a partial picture as complete.
+          truncated = true;
+          context.warn(
+            `conversations/search: hit MAX_PAGES=${MAX_PAGES} (${conversations.length} records)`,
+          );
+          break;
+        }
       }
 
-      return {
-        status: 200,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { conversations },
-      };
+      return json(200, { conversations, truncated });
     } catch (err) {
-      context.error(`conversations/search: upstream error: ${err.message ?? err}`);
-      const status = err.status === 401 ? 401 : 502;
-      return {
-        status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: status === 401 ? "unauthorized" : "upstream_error" },
-      };
+      return upstreamFailure(context, "conversations/search", err);
     }
   },
 });

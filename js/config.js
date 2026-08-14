@@ -21,7 +21,6 @@ export const CONFIG = {
   // Whether a valid customer has been resolved from the backend.
   resolved: false,
   orgKey: null,
-  customerName: null,
 
   region: "",
   authHost: "",
@@ -89,7 +88,6 @@ export async function initConfig() {
   Object.assign(CONFIG, {
     resolved: true,
     orgKey: data.key,
-    customerName: data.name || null,
     region: data.region,
     authHost: `login.${data.region}`,
     apiBase: `https://api.${data.region}`,
