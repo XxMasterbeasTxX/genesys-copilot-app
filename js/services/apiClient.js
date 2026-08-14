@@ -1,5 +1,21 @@
 import { CONFIG } from "../config.js";
 
+// ============================================================================
+// Direct Genesys API client (browser → Genesys).
+// ----------------------------------------------------------------------------
+// All orchestration (copilot/queue/agent cascades, analytics search, checklist
+// + summary enrichment) now runs server-side in the BFF, so this client is
+// deliberately SMALL: it covers only the calls that must stay in the browser.
+//
+// Recordings are the one remaining case. Playback needs a short-lived presigned
+// media URL fetched on demand and handed straight to an <audio>/<video> element;
+// proxying that through the BFF would buy nothing and add a hop. Login and
+// identity are handled separately in authService.js.
+//
+// Do NOT re-add orchestration helpers here. A second copy of a rule like "what
+// counts as copilot-enabled" is exactly the drift the BFF migration removed.
+// ============================================================================
+
 /** Maximum number of retries for rate-limited (429) or server-error (5xx) responses. */
 const MAX_RETRIES = 3;
 /** Base delay in ms before the first retry (doubled each attempt). */
@@ -49,7 +65,7 @@ function releaseSlot() {
 }
 
 export function createApiClient(getAccessToken) {
-  async function request(path, { method = "GET", headers = {}, body } = {}) {
+  async function request(path, { method = "GET", headers = {}, body, signal } = {}) {
     const token = getAccessToken();
     if (!token) throw new Error("No access token available");
 
@@ -64,6 +80,7 @@ export function createApiClient(getAccessToken) {
             ...headers,
           },
           body: body ? JSON.stringify(body) : undefined,
+          signal,
         });
 
         // Retry on 429 (rate-limit) and 5xx (server errors)
@@ -94,158 +111,18 @@ export function createApiClient(getAccessToken) {
   }
 
   return {
-    getUsersMe: () => request("/api/v2/users/me"),
-
-    // ── Assistants / Copilot ────────────────────────────────────
-    /** Fetch ALL assistants with copilot config embedded (cursor-paginated). */
-    getAllAssistants: async () => {
-      const all = [];
-      let after = undefined;
-      for (;;) {
-        const qs = new URLSearchParams({ pageSize: 200, expand: "copilot" });
-        if (after) qs.set("after", after);
-        const res = await request(`/api/v2/assistants?${qs}`);
-        if (res.entities) all.push(...res.entities);
-        if (!res.nextUri) break;
-        const m = new URL(res.nextUri, CONFIG.apiBase).searchParams.get("after");
-        if (!m) break;
-        after = m;
-      }
-      return all;
-    },
-
-    /**
-     * Copilot-enabled assistants only, projected to { id, name }.
-     * Mirrors the GET /api/copilots backend endpoint so the direct and
-     * backend (BFF) clients are interchangeable behind the orchestration flag.
-     */
-    getCopilots: async function () {
-      const assistants = await this.getAllAssistants();
-      return assistants
-        .filter((a) => a.copilot?.enabled === true || a.copilot?.liveOnQueue === true)
-        .map((a) => ({ id: a.id, name: a.name }));
-    },
-
-    /** Fetch queue IDs assigned to an assistant (cursor-paginated). */
-    getAssistantQueues: async (assistantId) => {
-      const all = [];
-      let after = undefined;
-      for (;;) {
-        const qs = new URLSearchParams({ pageSize: 200 });
-        if (after) qs.set("after", after);
-        const res = await request(
-          `/api/v2/assistants/${assistantId}/queues?${qs}`,
-        );
-        if (res.entities) all.push(...res.entities);
-        if (!res.nextUri) break;
-        const m = new URL(res.nextUri, CONFIG.apiBase).searchParams.get("after");
-        if (!m) break;
-        after = m;
-      }
-      return all; // [{ id, mediaTypes, … }]
-    },
-
-    /**
-     * Queues for the selected copilots (assistants), resolved to { id, label }.
-     * Mirrors the POST /api/queues backend endpoint: fan out to each assistant's
-     * queues, de-dup, then resolve names. Direct and BFF clients are
-     * interchangeable behind the orchestration flag.
-     */
-    getQueuesForCopilots: async function (assistantIds) {
-      if (!assistantIds?.length) return [];
-      const perAssistant = await Promise.all(
-        assistantIds.map((id) => this.getAssistantQueues(id)),
-      );
-      const queueIds = new Set();
-      for (const queues of perAssistant) {
-        for (const q of queues) if (q?.id) queueIds.add(q.id);
-      }
-      const idArr = [...queueIds];
-      const names = await Promise.allSettled(idArr.map((id) => this.getQueue(id)));
-      return idArr.map((id, i) => ({
-        id,
-        label:
-          names[i].status === "fulfilled" && names[i].value?.name
-            ? names[i].value.name
-            : id,
-      }));
-    },
-
-    /**
-     * Agents (members) across the selected queues, de-duped and sorted by name.
-     * Mirrors the POST /api/agents backend endpoint.
-     */
-    getAgentsForQueues: async function (queueIds) {
-      if (!queueIds?.length) return [];
-      const perQueue = await Promise.all(
-        queueIds.map((id) => this.getQueueMembers(id)),
-      );
-      const agentMap = new Map();
-      for (const members of perQueue) {
-        for (const m of members) {
-          const userId = m.id ?? m.user?.id;
-          const userName = m.name ?? m.user?.name ?? userId;
-          if (userId) agentMap.set(userId, userName);
-        }
-      }
-      return [...agentMap.entries()]
-        .map(([id, label]) => ({ id, label }))
-        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
-    },
-
-    // ── Routing ─────────────────────────────────────────────────
-    /** Fetch a single queue by ID (for name resolution). */
-    getQueue: (queueId) => request(`/api/v2/routing/queues/${queueId}`),
-
-    /** Fetch ALL members of a queue (auto-paginates). */
-    getQueueMembers: async (queueId) => {
-      const all = [];
-      let page = 1;
-      let total = Infinity;
-      while (all.length < total) {
-        const qs = new URLSearchParams({ pageNumber: page, pageSize: 100 });
-        const res = await request(
-          `/api/v2/routing/queues/${queueId}/members?${qs}`,
-        );
-        total = res.total ?? res.entities?.length ?? 0;
-        if (res.entities) all.push(...res.entities);
-        if (!res.entities?.length) break;
-        page++;
-      }
-      return all;
-    },
-
-    // ── Analytics ───────────────────────────────────────────────
-    /** POST conversation detail query (returns { conversations, totalHits }). */
-    queryConversationDetails: (body) =>
-      request("/api/v2/analytics/conversations/details/query", {
-        method: "POST",
-        body,
-      }),
-
-    // ── Conversations + Checklists ──────────────────────────────
-    /** Fetch a single conversation (participants, communications). */
-    getConversation: (conversationId) =>
-      request(`/api/v2/conversations/${conversationId}`),
-
-    /** Fetch checklists for a conversation communication. */
-    getConversationChecklists: (conversationId, communicationId) =>
-      request(
-        `/api/v2/conversations/${conversationId}/communications/${communicationId}/agentchecklists`,
-      ),
-
-    /** Fetch conversation summaries (may contain multiple entities). */
-    getConversationSummaries: (conversationId) =>
-      request(`/api/v2/conversations/${conversationId}/summaries`),
-
+    // ── Recordings (must stay browser-side: short-lived presigned URLs) ──
     /**
      * List all recording stubs for a conversation (no format/transcode requested).
      * Returns metadata: id, fileState, mediaType, durationMilliseconds, etc.
      * Does NOT include a playable mediaUri — use getConversationRecording() for that.
      * maxWaitMs is required; without it the API returns empty for un-cached recordings.
      */
-    getConversationRecordings: (conversationId) =>
-      request(`/api/v2/conversations/${conversationId}/recordings?maxWaitMs=5000`),
+    getConversationRecordings: (conversationId, { signal } = {}) =>
+      request(
+        `/api/v2/conversations/${encodeURIComponent(conversationId)}/recordings?maxWaitMs=5000`,
+        { signal },
+      ),
 
     /**
      * Fetch a single recording with a presigned playable URL.
@@ -256,26 +133,12 @@ export function createApiClient(getAccessToken) {
      * @param {string} recordingId
      * @param {string} [formatId='MP3'] WAV | WEBM | WAV_ULAW | OGG_VORBIS | OGG_OPUS | MP3
      */
-    getConversationRecording: (conversationId, recordingId, formatId = "MP3") =>
+    getConversationRecording: (conversationId, recordingId, formatId = "MP3", { signal } = {}) =>
       request(
-        `/api/v2/conversations/${conversationId}/recordings/${recordingId}?formatId=${formatId}&maxWaitMs=5000`,
+        `/api/v2/conversations/${encodeURIComponent(conversationId)}` +
+          `/recordings/${encodeURIComponent(recordingId)}` +
+          `?formatId=${encodeURIComponent(formatId)}&maxWaitMs=5000`,
+        { signal },
       ),
-
-    // ── Lookup helpers ──────────────────────────────────────────
-    /** Fetch ALL wrap-up codes (auto-paginated). Returns [{ id, name, … }]. */
-    getAllWrapupCodes: async () => {
-      const all = [];
-      let page = 1;
-      let total = Infinity;
-      while (all.length < total) {
-        const qs = new URLSearchParams({ pageNumber: page, pageSize: 500 });
-        const res = await request(`/api/v2/routing/wrapupcodes?${qs}`);
-        total = res.total ?? res.entities?.length ?? 0;
-        if (res.entities) all.push(...res.entities);
-        if (!res.entities?.length) break;
-        page++;
-      }
-      return all;
-    },
   };
 }

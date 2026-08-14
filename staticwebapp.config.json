@@ -8,5 +8,11 @@
       "/docs/*",
       "/*.{png,jpg,jpeg,gif,css,js,ico,svg,woff,woff2,html,map}"
     ]
+  },
+  "globalHeaders": {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self' blob: https:; connect-src 'self' https://*.mypurecloud.com https://*.mypurecloud.de https://*.mypurecloud.ie https://*.mypurecloud.jp https://*.mypurecloud.com.au https://*.pure.cloud; frame-ancestors 'self' https://*.mypurecloud.com https://*.mypurecloud.de https://*.mypurecloud.ie https://*.mypurecloud.jp https://*.mypurecloud.com.au https://*.pure.cloud; base-uri 'self'; form-action 'self'; object-src 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()"
   }
 }

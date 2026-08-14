@@ -64,29 +64,27 @@ Before starting, ensure you have:
     ├── utils.js
     ├── components/
     │   └── multiSelect.js
-    ├── lib/
-    │   └── xlsx.full.min.js    # SheetJS fallback (export uses xlsx-js-style via CDN)
     ├── pages/
     │   ├── welcome.js
     │   ├── notfound.js
-    │   ├── placeholder.js
     │   └── dashboards/
     │       └── agent-copilot/
     │           ├── agentChecklists.js
     │           ├── checklistConfig.js
     │           └── performance.js
     └── services/
-        ├── apiClient.js        # Low-level Genesys API wrapper (direct browser calls)
+        ├── apiClient.js        # Direct Genesys calls that stay browser-side (recordings)
         ├── bffClient.js        # BFF client — calls the app's own /api/* endpoints
         └── authService.js
 api/                            # Azure Functions BFF (SWA managed; server-side)
 ├── host.json
 ├── package.json
 ├── data/customers.js          # Server-side customer registry (never shipped to browser)
+├── test/                      # node:test unit tests — run with `cd api && npm test`
 └── src/
     ├── functions/             # org-config, copilots, queues, agents, wrapup-codes,
     │                          #   conversations/search, conversations/enrich
-    └── shared/                # orgResolve, genesysClient, checklistEnrich
+    └── shared/                # orgResolve, genesysClient, checklistEnrich, http
 ```
 
 ### 2.2 Branch Protection (Recommended)

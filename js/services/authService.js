@@ -9,37 +9,13 @@ const K_OAUTH_STATE   = "oauth_state";
 // Use a small skew to avoid using a token that's about to expire mid-request
 const EXPIRY_SKEW_MS = 60 * 1000;
 
-// Key for cross-tab session handoff via localStorage
-const K_HANDOFF = "gc_tab_handoff";
-
-/**
- * Save current session to localStorage so a new tab can pick it up.
- * The handoff is consumed (deleted) by the receiving tab.
- */
-export function saveTabHandoff() {
-  const token = sessionStorage.getItem(K_ACCESS_TOKEN);
-  const expiresAt = sessionStorage.getItem(K_EXPIRES_AT);
-  if (!token || !expiresAt) return;
-  localStorage.setItem(K_HANDOFF, JSON.stringify({ token, expiresAt, ts: Date.now() }));
-}
-
-/**
- * If this tab has no session but a handoff exists in localStorage,
- * import it into sessionStorage and remove the handoff.
- */
-function consumeTabHandoff() {
-  if (sessionStorage.getItem(K_ACCESS_TOKEN)) return; // already have a session
-  const raw = localStorage.getItem(K_HANDOFF);
-  if (!raw) return;
-  try {
-    const { token, expiresAt, ts } = JSON.parse(raw);
-    // Only accept handoffs less than 30 seconds old
-    if (Date.now() - ts > 30_000) { localStorage.removeItem(K_HANDOFF); return; }
-    sessionStorage.setItem(K_ACCESS_TOKEN, token);
-    sessionStorage.setItem(K_EXPIRES_AT, expiresAt);
-  } catch (_) { /* ignore corrupt data */ }
-  localStorage.removeItem(K_HANDOFF);
-}
+// NOTE: there is deliberately no cross-tab session handoff. An earlier version
+// had one half-wired (a reader with no writer), which meant it never actually
+// worked. Re-introducing it would require copying the access token into
+// localStorage, where it outlives the tab and is readable by anything on the
+// origin; sessionStorage keeps it scoped to the tab that obtained it. A new tab
+// re-runs the PKCE flow instead, which is silent when the Genesys session is
+// still live.
 
 // --- UTILS ---
 function qp() { return new URLSearchParams(window.location.search); }
@@ -194,9 +170,6 @@ async function verifyOrgOrThrow(accessToken) {
  *  { status:"redirecting" }
  */
 export async function ensureAuthenticatedWithMe() {
-  // Check for cross-tab session handoff
-  consumeTabHandoff();
-
   const p = qp();
 
   // A) Returned with a code
@@ -257,14 +230,6 @@ export async function ensureAuthenticatedWithMe() {
   // C) No token and no code => login
   await startLoginRedirect();
   return { status: "redirecting" };
-}
-
-/**
- * Force a new login (e.g. after token revocation or manual sign-out).
- */
-export async function refreshSession() {
-  clearAuthSession();
-  await startLoginRedirect();
 }
 
 // --- PROACTIVE SESSION REFRESH ---

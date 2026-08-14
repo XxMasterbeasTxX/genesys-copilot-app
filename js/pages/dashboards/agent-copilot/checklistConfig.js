@@ -15,35 +15,28 @@ export const RANGE_PRESETS = [
   { label: "30 days", days: 30 },
 ];
 
-/** Maximum interval the Genesys analytics API allows (days). */
+/**
+ * Maximum interval the Genesys analytics API allows (days).
+ * The BFF enforces the same limit — this copy only exists to fail fast in the
+ * UI. Keep the two in step (api/src/functions/conversationsSearch.js).
+ */
 export const MAX_INTERVAL_DAYS = 31;
 
-// ── Analytics query ───────────────────────────────────────
-/** Max conversations per page returned by the detail query. */
-export const QUERY_PAGE_SIZE = 100;
-
 // ── Checklist enrichment ──────────────────────────────────
-/** Number of conversations to enrich in parallel per batch. */
+/**
+ * Number of conversations sent to /api/conversations/enrich per batch.
+ * Must stay <= MAX_CONVERSATION_IDS in api/src/functions/conversationsEnrich.js.
+ */
 export const ENRICHMENT_BATCH = 10;
-
-/** Number of queue-name lookups to run in parallel. */
-export const QUEUE_RESOLVE_BATCH = 10;
 
 // ── Time constants ────────────────────────────────────────
 /** Milliseconds in one day. */
 export const MS_PER_DAY = 86_400_000;
 
 // ── Genesys API constants ─────────────────────────────────
-/**
- * Media-specific keys under which communications are nested
- * inside a conversation participant (the API does NOT use a
- * generic "communications" key).
- */
-export const MEDIA_KEYS = [
-  "messages", "calls", "chats",
-  "callbacks", "emails", "socialExpressions", "videos",
-  "cobrowsesessions", "screenshares", "internalMessages",
-];
+// The server owns the conversation traversal (media keys, checklist dedup,
+// completion) in api/src/shared/checklistEnrich.js. Only the values the browser
+// still needs to READ off an enriched record live here.
 
 /** Participant purpose value for agent participants. */
 export const PURPOSE_AGENT = "agent";
@@ -57,7 +50,13 @@ export const TICK_STATE = Object.freeze({
   UNTICKED: "Unticked",
 });
 
-/** Client-side status filter values. */
+/**
+ * Client-side status filter values. COMPLETE/INCOMPLETE must match the
+ * `completion` values produced by the server (checklistEnrich.js STATUS).
+ * A record may also have `completion: null` — "undetermined", e.g. a checklist
+ * that carries no items. That is NOT incomplete and must never be counted as
+ * such (see LABELS.badgeNoItems).
+ */
 export const STATUS_FILTER = Object.freeze({
   ALL: "all",
   COMPLETE: "complete",
@@ -72,15 +71,6 @@ export const TABLE_DATE_FORMAT = {
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-};
-
-export const TOOLTIP_DATE_FORMAT = {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
 };
 
 // ── Chart configuration ───────────────────────────────────
@@ -128,41 +118,48 @@ export const EXPORT_HEADER_STYLE = {
   },
 };
 
-/** Column widths (wch = "width in characters") for Sheet 1 (Summary). */
-export const EXPORT_SUMMARY_COLS = [
-  { wch: 28 }, // Agent
-  { wch: 24 }, // Queue
-  { wch: 24 }, // Copilot
-  { wch: 24 }, // Checklist
-  { wch: 14 }, // Total
-  { wch: 14 }, // Complete
-  { wch: 14 }, // Incomplete
-  { wch: 14 }, // Completion %
-];
+/**
+ * Column widths (wch = "width in characters") keyed by COLUMN HEADER.
+ *
+ * Keyed by name rather than by position on purpose: the previous positional
+ * arrays silently went out of step with the sheets whenever a column was
+ * inserted (the "Wrapup" and per-item "Agent" columns both shifted every width
+ * after them). With a lookup, an unlisted column simply falls back to
+ * EXPORT_DEFAULT_COL_WIDTH instead of corrupting its neighbours.
+ *
+ * Shared across all three sheets — identical headers get identical widths.
+ */
+export const EXPORT_COL_WIDTHS = Object.freeze({
+  "Conversation ID": 38,
+  "Time": 20,
+  "Agent": 28,
+  "Queue": 24,
+  "Copilot": 24,
+  "Media": 10,
+  "Duration (s)": 12,
+  "Checklist": 24,
+  "Wrapup": 28,
+  "Status": 14,
+  "Total": 14,
+  "Complete": 14,
+  "Incomplete": 14,
+  "Completion %": 14,
+  "Item": 30,
+  "Description": 40,
+  "Agent Ticked": 14,
+  "AI Ticked": 12,
+  "Important": 12,
+});
 
-/** Column widths for Sheet 2 (Interactions). */
-export const EXPORT_INTERACTION_COLS = [
-  { wch: 38 }, // Conversation ID
-  { wch: 20 }, // Time
-  { wch: 24 }, // Agent
-  { wch: 22 }, // Queue
-  { wch: 22 }, // Copilot
-  { wch: 10 }, // Media
-  { wch: 12 }, // Duration
-  { wch: 24 }, // Checklist
-  { wch: 12 }, // Status
-];
+/** Width used for any exported column not listed above. */
+export const EXPORT_DEFAULT_COL_WIDTH = 18;
 
-/** Column widths for Sheet 3 (Checklist Items). */
-export const EXPORT_ITEM_COLS = [
-  { wch: 38 }, // Conversation ID
-  { wch: 24 }, // Checklist
-  { wch: 30 }, // Item
-  { wch: 40 }, // Description
-  { wch: 12 }, // Agent Ticked
-  { wch: 10 }, // AI Ticked
-  { wch: 10 }, // Important
-];
+/**
+ * Approximate ceiling on the base64 payload the download helper can carry in a
+ * URL hash. Chrome tops out around 2 MB; stop short of it with a clear message
+ * rather than opening a tab that silently produces a truncated file.
+ */
+export const EXPORT_MAX_B64_BYTES = 1_800_000;
 
 // ── UI labels ─────────────────────────────────────────────
 /** Labels used in the status filter buttons. */
@@ -180,5 +177,8 @@ export const LABELS = Object.freeze({
   badgeComplete: "✅ Complete",
   badgeIncomplete: "⚠️ Incomplete",
   badgeNone: "No checklist",
+  /** A checklist exists but has no items — undetermined, not incomplete. */
+  badgeNoItems: "No items",
   badgeError: "⚠ Error",
+  exportFiltered: "Export reflects the filters currently applied.",
 });

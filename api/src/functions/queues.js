@@ -1,6 +1,7 @@
 const { app } = require("@azure/functions");
 const { resolveRequestOrg } = require("../shared/orgResolve");
 const { genesysRequest, genesysPaginateCursor } = require("../shared/genesysClient");
+const { json, readJson, readIdList, upstreamFailure } = require("../shared/http");
 
 // ============================================================================
 // POST /api/queues   { assistantIds: string[] }
@@ -11,53 +12,41 @@ const { genesysRequest, genesysPaginateCursor } = require("../shared/genesysClie
 // minimal projection the UI needs. The fan-out + name-resolution orchestration
 // stays server-side.
 //
-// Auth: token-forwarding (Authorization: Bearer …  +  X-Org-Key).
+// Auth: token-forwarding (X-Genesys-Token + X-Org-Key).
 //
 // Responses:
 //   200 [{ id, label }]                    — queues for the selected copilots
-//   400 { error: "missing_ids" | "missing_org" | "unknown_org" }
+//   400 { error: "missing_ids" | "too_many_assistantIds" | "missing_org" | "unknown_org" }
 //   401 { error: "missing_token" | "unauthorized" }
+//   403 { error: "org_mismatch" }
 //   502 { error: "upstream_error" }
 // ============================================================================
+
+/** Upper bound on copilots per request — each one costs a paginated fan-out. */
+const MAX_ASSISTANT_IDS = 50;
+
 app.http("queues", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "queues",
   handler: async (request, context) => {
-    const org = resolveRequestOrg(request);
-    if (!org.ok) {
-      return {
-        status: org.status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: org.error },
-      };
-    }
+    const org = await resolveRequestOrg(request, context);
+    if (!org.ok) return json(org.status, { error: org.error });
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
-    }
-    const assistantIds = Array.isArray(body?.assistantIds) ? body.assistantIds : null;
-    if (!assistantIds) {
-      return {
-        status: 400,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: "missing_ids" },
-      };
-    }
-    if (!assistantIds.length) {
-      return { status: 200, headers: { "Cache-Control": "no-store" }, jsonBody: [] };
-    }
+    const body = await readJson(request);
+    const parsed = readIdList(body.assistantIds, {
+      max: MAX_ASSISTANT_IDS,
+      field: "assistantIds",
+    });
+    if (!parsed.ok) return parsed.response;
+    if (!parsed.ids.length) return json(200, []);
 
     try {
       // Fan out: queues assigned to each selected assistant.
       const perAssistant = await Promise.all(
-        assistantIds.map((id) =>
+        parsed.ids.map((id) =>
           genesysPaginateCursor({
-            apiBase: org.apiBase,
-            token: org.token,
+            org,
             path: `/api/v2/assistants/${encodeURIComponent(id)}/queues`,
             pageSize: 200,
             context,
@@ -75,8 +64,7 @@ app.http("queues", {
       const names = await Promise.allSettled(
         idArr.map((id) =>
           genesysRequest({
-            apiBase: org.apiBase,
-            token: org.token,
+            org,
             path: `/api/v2/routing/queues/${encodeURIComponent(id)}`,
             context,
           }),
@@ -91,15 +79,9 @@ app.http("queues", {
             : id,
       }));
 
-      return { status: 200, headers: { "Cache-Control": "no-store" }, jsonBody: items };
+      return json(200, items);
     } catch (err) {
-      context.error(`queues: upstream error: ${err.message ?? err}`);
-      const status = err.status === 401 ? 401 : 502;
-      return {
-        status,
-        headers: { "Cache-Control": "no-store" },
-        jsonBody: { error: status === 401 ? "unauthorized" : "upstream_error" },
-      };
+      return upstreamFailure(context, "queues", err);
     }
   },
 });

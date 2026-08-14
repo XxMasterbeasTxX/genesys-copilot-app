@@ -54,7 +54,8 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 | Expiry timestamp | `sessionStorage` | Per-tab |
 | PKCE verifier | `sessionStorage` | Transient (deleted after exchange) |
 | OAuth state | `sessionStorage` | Transient (deleted after exchange) |
-| Cross-tab handoff | `localStorage` | Temporary (30-second TTL, then deleted) |
+
+> Nothing auth-related is written to `localStorage`. The access token stays in `sessionStorage`, scoped to the tab that obtained it; a second tab re-runs the PKCE flow, which is silent while the Genesys session is live.
 
 > No tokens are written to cookies or IndexedDB. The token is sent only to Genesys Cloud (directly) and, for orchestration, forwarded to the app's own first-party Azure Functions backend (`/api/*`) via the `X-Genesys-Token` header. It is never sent to any third-party server.
 
@@ -77,6 +78,38 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 | `/api/wrapup-codes` | GET | `GET /api/v2/routing/wrapupcodes` (paginated) | Wrap-up code id → name map |
 | `/api/conversations/search` | POST | `POST /api/v2/analytics/conversations/details/query` (paginated) | Conversation rows for the date range + filters |
 | `/api/conversations/enrich` | POST | `GET /api/v2/conversations/{id}`, `/agentchecklists`, `/summaries` per conversation | Per-conversation checklists + summaries |
+
+### Org binding
+
+Every orchestration endpoint verifies that the forwarded token actually belongs to the org named in `X-Org-Key`, by reading `GET /api/v2/organizations/me` and comparing it to that entry's `orgId` (cached 5 minutes per token). A mismatch returns **403 `org_mismatch`**. Without this the org key would be decorative: a caller could label their own token with any key and have it forwarded to a different region's host. Registry entries with no `orgId` skip the check.
+
+### Request limits
+
+Enforced server-side — the equivalent client-side checks exist only for fast feedback and are bypassable.
+
+| Limit | Value | Endpoint |
+| --- | --- | --- |
+| Copilot IDs per request | 50 | `/api/queues`, `/api/conversations/search` |
+| Queue IDs per request | 100 | `/api/agents`, `/api/conversations/search` |
+| Agent IDs per request | 500 | `/api/conversations/search` |
+| Conversation IDs per enrichment batch | 25 | `/api/conversations/enrich` |
+| Analytics pages per search | 50 (× 100 rows) | `/api/conversations/search` |
+| Pages per auto-paginated collection | 50 | all paginated endpoints |
+| Interval length | 31 days | `/api/conversations/search` |
+
+A search that reaches the page ceiling returns `truncated: true` alongside the rows; the UI then labels the result set as partial instead of presenting it as complete.
+
+### Error codes
+
+| Status | `error` | Meaning |
+| --- | --- | --- |
+| 400 | `missing_org`, `unknown_org` | `X-Org-Key` absent or not in the registry |
+| 400 | `missing_ids`, `missing_params` | Required body fields absent |
+| 400 | `too_many_*` | An ID list exceeded the limits above |
+| 400 | `invalid_interval`, `interval_too_long` | Date range unparseable, inverted, or over 31 days |
+| 401 | `missing_token`, `unauthorized` | No forwarded token, or Genesys rejected it |
+| 403 | `org_mismatch` | The token belongs to a different organization |
+| 502 | `upstream_error` | Genesys call failed after retries |
 
 ### 2.1 User Identity
 
@@ -166,6 +199,8 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 ### 2.7 Request Throttle & Retry
 
 All Genesys calls — whether made server-side by the BFF or directly by the browser — are subject to a throttle and automatic retry mechanism. This prevents exceeding Genesys Cloud's rate limits (~300 requests/minute) during bulk operations such as checklist enrichment. The BFF throttle lives in `api/src/shared/genesysClient.js`; the browser throttle (for direct calls such as recordings) lives in `js/services/apiClient.js`. Both use the same settings:
+
+The BFF throttle is **per organization**: Genesys applies its rate limits per org, so budgets are tracked separately per `X-Org-Key` and one customer's bulk enrichment cannot slow another customer sharing the same Functions worker.
 
 **Throttle (proactive):**
 

@@ -13,6 +13,9 @@ const { genesysRequest } = require("./genesysClient");
 //
 // Names are derived from the conversation's own participants (the browser's
 // userNameCache is not available here, and is only ever a secondary fallback).
+//
+// The pure helpers below (checklistCompletion, parseSummaries) are exported for
+// unit tests — see api/test/checklistEnrich.test.js.
 // ============================================================================
 
 /**
@@ -37,6 +40,10 @@ const STATUS = { COMPLETE: "complete", INCOMPLETE: "incomplete" };
 /**
  * Determine completion across ALL checklists: "complete" only if every item in
  * every checklist is ticked (by agent or model).
+ *
+ * Returns null when there is nothing to judge (no checklists, or checklists
+ * that carry no items). Callers must treat null as "undetermined" rather than
+ * folding it into "incomplete" — an empty checklist is not a failed one.
  */
 function checklistCompletion(checklists) {
   const all = (Array.isArray(checklists) ? checklists : [checklists]).filter(Boolean);
@@ -50,19 +57,31 @@ function checklistCompletion(checklists) {
 
 /**
  * Parse the conversation summaries API response into a flat array.
- * The API returns { summary: {...}, sessionSummaries: [{...}] }.
+ *
+ * The API returns { summary: {...}, sessionSummaries: [{...}] }, where
+ * `summary` is the conversation-level summary and `sessionSummaries` holds one
+ * entry per session. For a single-session conversation the two are the same
+ * record, so de-duplicate by id and only fall back to a count-based rule when
+ * ids are absent.
  */
 function parseSummaries(res) {
   if (!res || typeof res !== "object") return [];
+
   const out = [];
   if (Array.isArray(res.sessionSummaries)) {
-    out.push(...res.sessionSummaries);
+    out.push(...res.sessionSummaries.filter(Boolean));
   }
-  if (res.summary && typeof res.summary === "object" && Object.keys(res.summary).length) {
-    if (out.length !== 1) out.unshift(res.summary);
+
+  const top = res.summary;
+  if (top && typeof top === "object" && Object.keys(top).length) {
+    const alreadyPresent = top.id
+      ? out.some((s) => s.id === top.id)
+      : out.length > 0; // no id to compare on — assume the session copies cover it
+    if (!alreadyPresent) out.unshift(top);
   }
+
   if (!out.length && Array.isArray(res.entities)) {
-    out.push(...res.entities);
+    out.push(...res.entities.filter(Boolean));
   }
   return out;
 }
@@ -81,14 +100,18 @@ function tagSummariesWithAgent(summaries, commAgentMap) {
  * Enrich a single conversation. Never throws — failures are returned as an
  * `_error` field on the record so a batch can continue (mirrors enrichOne).
  *
+ * @param {object} args
+ * @param {{orgKey: string, apiBase: string, token: string}} args.org server-resolved org context
+ * @param {string} args.convId
+ * @param {object} [args.context]
  * @returns {Promise<{checklists: any[], communicationId: string|null,
  *                     completion: string|null, summaries: any[], _error?: string}>}
  */
-async function enrichConversation({ apiBase, token, convId, context }) {
+async function enrichConversation({ org, convId, context }) {
   try {
     // Step 1: full conversation → agent communication IDs.
     const fullConv = await genesysRequest({
-      apiBase, token, path: `/api/v2/conversations/${convId}`, context,
+      org, path: `/api/v2/conversations/${encodeURIComponent(convId)}`, context,
     });
     const agentParts = (fullConv.participants ?? []).filter(
       (p) => p.purpose === PURPOSE_AGENT,
@@ -110,7 +133,7 @@ async function enrichConversation({ apiBase, token, convId, context }) {
     let summaries = [];
     try {
       const sumRes = await genesysRequest({
-        apiBase, token, path: `/api/v2/conversations/${convId}/summaries`, context,
+        org, path: `/api/v2/conversations/${encodeURIComponent(convId)}/summaries`, context,
       });
       summaries = parseSummaries(sumRes);
       tagSummariesWithAgent(summaries, commAgentMap);
@@ -129,8 +152,9 @@ async function enrichConversation({ apiBase, token, convId, context }) {
     for (const commId of commIds) {
       try {
         const checklistRes = await genesysRequest({
-          apiBase, token,
-          path: `/api/v2/conversations/${convId}/communications/${commId}/agentchecklists`,
+          org,
+          path: `/api/v2/conversations/${encodeURIComponent(convId)}` +
+                `/communications/${encodeURIComponent(commId)}/agentchecklists`,
           context,
         });
         let list;
@@ -186,4 +210,4 @@ async function enrichConversation({ apiBase, token, convId, context }) {
   }
 }
 
-module.exports = { enrichConversation };
+module.exports = { enrichConversation, checklistCompletion, parseSummaries, STATUS, TICK_STATE };

@@ -5,8 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Agent Copilot</title>
   <link rel="stylesheet" href="css/styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <!--
+    Third-party libraries are pinned to an exact version and guarded with a
+    Subresource Integrity hash: a floating tag (chart.js@4) would let the CDN
+    ship new code into an app that renders customer conversation data, with no
+    review. To upgrade, change the version AND regenerate the hash:
+      curl -sS <url> | openssl dgst -sha384 -binary | openssl base64 -A
+  -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+    crossorigin="anonymous"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"
+    integrity="sha384-OUW9euuUyxyHcAhTqbhI+Iyb8LMssXt/cpz0yXhs9UWG2/R/uaWdakx/4cfww7Vb"
+    crossorigin="anonymous"></script>
 </head>
 <body>
   <div class="app-shell">
