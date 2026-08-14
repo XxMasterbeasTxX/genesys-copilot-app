@@ -154,13 +154,6 @@ export const EXPORT_COL_WIDTHS = Object.freeze({
 /** Width used for any exported column not listed above. */
 export const EXPORT_DEFAULT_COL_WIDTH = 18;
 
-/**
- * Approximate ceiling on the base64 payload the download helper can carry in a
- * URL hash. Chrome tops out around 2 MB; stop short of it with a clear message
- * rather than opening a tab that silently produces a truncated file.
- */
-export const EXPORT_MAX_B64_BYTES = 1_800_000;
-
 // ── UI labels ─────────────────────────────────────────────
 /** Labels used in the status filter buttons. */
 export const LABELS = Object.freeze({

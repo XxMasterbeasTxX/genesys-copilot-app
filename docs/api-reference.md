@@ -30,11 +30,27 @@ The app uses **OAuth 2.0 Authorization Code + PKCE** — the most secure browser
 | Detail | Value |
 | --- | --- |
 | URL | `https://login.{region}/oauth/authorize` |
-| Method | Browser redirect (GET) |
+| Method | Top-level navigation of the sign-in **pop-out window** (GET) |
 | Parameters | `response_type=code`, `client_id`, `redirect_uri`, `code_challenge` (S256), `state`, `scope` |
 | Scopes requested | `openid`, `profile`, `email`, `routing` |
 
-> The `redirect_uri` is the app's own origin (`window.location.origin`), so it automatically matches whichever URL the app is served from (DEV, PROD, or a customer host). Each such origin must be registered as an Authorized redirect URI on the Genesys OAuth client.
+> The `redirect_uri` is the app's own origin (`window.location.origin`), so it automatically matches whichever URL the app is served from (DEV, PROD, or a customer host). Each such origin must be registered as an Authorized redirect URI on the Genesys OAuth client. Pop-out authentication did **not** change this value, so no OAuth client reconfiguration is needed.
+
+#### Pop-out authentication
+
+Genesys is retiring the ability to embed the Genesys Cloud login web application in an iframe — new integrations from **2026-08-31**, all integrations from **2027-02-04** ([announcement](https://help.genesys.cloud/announcements/genesys-cloud/deprecation-ability-to-embed-the-genesys-cloud-login-web-application-within-an-iframe/)). The app therefore never navigates its own frame to the login page.
+
+Instead (`js/services/authService.js`):
+
+1. No valid session → `ensureAuthenticatedWithMe()` returns `needs-login` and `app.js` renders a **Sign in** gate. A user gesture is mandatory, because `window.open` is blocked without one.
+2. The click calls `loginViaPopup()`, which opens a same-origin popup at `?gcauth=start&org=<key>`.
+3. The popup boots the same `app.js`, detects itself via `isAuthPopup()`, resolves its org config, and runs the PKCE authorize redirect as a **top-level** navigation.
+4. Genesys returns to the app origin with `?code=`; the popup exchanges the code, `postMessage`s `{accessToken, expiresAt}` to its opener with an explicit target origin, and closes.
+5. The app stores the token in its own `sessionStorage` and reloads, so the normal boot path fetches `/users/me` and re-runs the org-match check.
+
+The popup runs the entire flow itself because **storage is partitioned**: the third-party iframe and the top-level popup get separate storage buckets, so the PKCE verifier cannot be shared through `sessionStorage`. `postMessage` over a live window handle is the only reliable channel back. The org key travels on the popup URL for the same reason; the popup persists it into its own storage so it survives the round trip through Genesys.
+
+Session expiry and failed token validation now reload the app in-frame (a same-origin self navigation) rather than redirecting to login.
 
 ### 1.2 Token Exchange
 

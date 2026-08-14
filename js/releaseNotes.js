@@ -11,6 +11,16 @@
  */
 export const RELEASE_NOTES = [
   {
+    version: "1.4",
+    date: "2026-08-14",
+    title: "Pop-out sign-in & unlimited exports",
+    changes: [
+      "Sign-in now opens a separate window instead of loading the Genesys login page inside the app. Genesys is retiring embedded login (all integrations must move by 4 February 2027).",
+      "You now click \"Sign in with Genesys\" once per session — pop-ups must be allowed for this app.",
+      "Excel exports no longer have a size limit; large exports download in full instead of being refused.",
+    ],
+  },
+  {
     version: "1.3",
     date: "2026-08-14",
     title: "Export fixes, accurate results & hardening",

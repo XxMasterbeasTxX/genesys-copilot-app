@@ -2,10 +2,16 @@
  * Excel export download helper.
  *
  * The app runs inside a cross-origin Genesys Cloud iframe where downloads,
- * showSaveFilePicker, postMessage and localStorage are all blocked or
- * partitioned. The export page therefore hands the workbook over in this page's
- * URL hash (`#<encoded filename>|<base64>`): a fragment never leaves the
- * browser and is not sent to the server.
+ * showSaveFilePicker and partitioned storage are all blocked or unavailable.
+ *
+ * The workbook is handed over through `window.opener`: the exporting page
+ * stashes it on `window._xlsxDownload[key]` and this page is opened with only
+ * the short random `key` in its URL hash. Both windows are same-origin, so the
+ * property read is direct.
+ *
+ * The payload deliberately does NOT travel in the URL: browsers cap URL length
+ * (Chrome around 2 MB), and a workbook over that limit was silently truncated
+ * into a corrupt file. Going through the opener removes any size ceiling.
  *
  * Lives in its own file rather than a <script> block so the
  * Content-Security-Policy can forbid inline script outright.
@@ -16,12 +22,25 @@
   var btnEl = document.getElementById("dlBtn");
 
   try {
-    var hash = location.hash.substring(1);
-    var sep = hash.indexOf("|");
-    if (!hash || sep < 0) { msgEl.textContent = "No export data found."; return; }
+    var key = location.hash.substring(1);
+    if (!key) { msgEl.textContent = "No export data found."; return; }
 
-    var fileName = decodeURIComponent(hash.substring(0, sep));
-    var b64 = hash.substring(sep + 1);
+    var store = window.opener && window.opener._xlsxDownload;
+    var payload = store && store[key];
+    if (!payload) {
+      msgEl.textContent = "Export data not found or expired. Please try the export again.";
+      return;
+    }
+
+    var fileName = payload.filename;
+    var b64 = payload.b64;
+
+    // Release the opener's copy as soon as it has been read — a workbook can be
+    // tens of megabytes and there is no reason to keep it alive in the app tab.
+    try { delete window.opener._xlsxDownload[key]; } catch (e) { /* ignore */ }
+
+    // Clear the hash so the key does not linger in history.
+    history.replaceState(null, "", location.pathname);
 
     // Decode base64
     var raw = atob(b64);
@@ -29,9 +48,6 @@
     for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
     var mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     var blob = new Blob([bytes], { type: mime });
-
-    // Clear hash for privacy
-    history.replaceState(null, "", location.pathname);
 
     msgEl.textContent = "Click the button to save your file:";
     btnEl.textContent = "⬇ Save " + fileName;

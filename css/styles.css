@@ -262,7 +262,28 @@ body {
   cursor: pointer;
 }
 .btn:hover { background: rgba(255,255,255,0.10); }
+
+/* Status text in the pop-out sign-in window. A class rather than an inline
+   style so the Content-Security-Policy can keep forbidding inline styles. */
+.auth-popup {
+  font: 14px/1.5 system-ui, -apple-system, sans-serif;
+  padding: 2rem;
+}
+
+/* Feedback under the Sign in button (pop-up blocked, window closed, …). */
+.sign-in-hint {
+  margin-top: 12px;
+  opacity: 0.8;
+  min-height: 1.5em;
+}
 .btn-sm { font-size: 12px; padding: 4px 8px; }
+/* Search controls are disabled while a search is running — make that visible,
+   and suppress the hover affordance so they don't look clickable. */
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn:disabled:hover { background: rgba(255,255,255,0.06); }
 
 /* ═══════════════════════════════════════════════════════════
    Multi-select dropdown component
@@ -542,6 +563,13 @@ body {
 .checklist-row { cursor: pointer; }
 .checklist-row:hover { background: rgba(255,255,255,0.04); }
 .checklist-row--active { background: rgba(59,130,246,0.12); }
+/* Rows are keyboard-operable (role="button", Enter/Space), so the focused row
+   has to be visible — outline alone is easily lost on a dense table. */
+.checklist-row:focus-visible {
+  outline: 2px solid var(--accent, #1f6feb);
+  outline-offset: -2px;
+  background: rgba(59,130,246,0.10);
+}
 
 /* ── Badges ──────────────────────────────────────────────── */
 .checklist-badge {
@@ -971,6 +999,11 @@ body {
   .checklist-row--active {
     background: rgba(59,130,246,0.08);
   }
+  .checklist-row:focus-visible {
+    background: rgba(59,130,246,0.08);
+  }
+
+  .btn:disabled:hover { background: rgba(0,0,0,0.03); }
 
   /* Badges */
   .checklist-badge--none {

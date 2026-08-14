@@ -33,7 +33,6 @@ import {
   EXPORT_HEADER_STYLE,
   EXPORT_COL_WIDTHS,
   EXPORT_DEFAULT_COL_WIDTH,
-  EXPORT_MAX_B64_BYTES,
   LABELS,
 } from "./checklistConfig.js";
 
@@ -1113,30 +1112,29 @@ export async function render({ route, me, api }) {
       appendSheet(wb, "Interactions", interactionRows);
       appendSheet(wb, "Checklist Items", itemRows);
 
-      // ── Download via URL-hash + helper page ─────────────────
-      // The app runs inside a cross-origin Genesys Cloud iframe where
-      // downloads, showSaveFilePicker, postMessage, and localStorage
-      // are all blocked or partitioned. Solution: encode the file as
-      // base64 in the URL hash of download.html. The hash fragment
-      // never leaves the browser and Chrome supports ~2 MB URLs.
+      // ── Hand the workbook to the helper page ────────────────
+      // The app runs inside a cross-origin Genesys Cloud iframe where direct
+      // downloads and showSaveFilePicker are blocked. The workbook is stashed
+      // on `window` under a random key and download.html reads it back through
+      // `window.opener` (both windows are same-origin).
+      //
+      // The data deliberately does NOT go in the URL: browsers cap URL length
+      // at roughly 2 MB, which silently truncated large exports into corrupt
+      // files. Through the opener there is no size ceiling.
       const today = new Date().toISOString().slice(0, 10);
       const fileName = `${EXPORT_FILENAME_PREFIX}_${today}.xlsx`;
       const b64 = XLSX.write(wb, { bookType: "xlsx", type: "base64" });
 
-      // Refuse rather than hand the browser a URL it will truncate into a
-      // corrupt file.
-      if (b64.length > EXPORT_MAX_B64_BYTES) {
-        statusEl.textContent =
-          `⚠ This export is too large to download (${Math.round(b64.length / 1024)} KB). ` +
-          `Narrow the period or the filters and try again.`;
-        return;
-      }
+      const key = `xlsx_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      window._xlsxDownload = window._xlsxDownload || {};
+      window._xlsxDownload[key] = { filename: fileName, b64 };
 
       const helperUrl = new URL("download.html", document.baseURI);
-      helperUrl.hash = encodeURIComponent(fileName) + "|" + b64;
+      helperUrl.hash = key;
 
       const popup = window.open(helperUrl.href, "_blank");
       if (!popup) {
+        delete window._xlsxDownload[key]; // don't leak the workbook
         statusEl.textContent = "⚠ Pop-up blocked. Please allow pop-ups for this site and try again.";
         return;
       }
